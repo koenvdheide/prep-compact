@@ -1,6 +1,6 @@
 # prep-compact
 
-A Claude Code plugin that nudges Claude to prepare tailored `/compact` instructions before the session runs out of context.
+A Claude Code plugin that nudges Claude to prepare tailored `/compact` instructions when the context window is getting full enough that performance has started dropping. Experience tells us that this seems to happen at about the halfway point of the current 1M token window for Opus. 
 
 When your session transcript passes a configurable byte threshold (default ~4 MB ≈ 450K tokens on Opus 4.7), a `UserPromptSubmit` hook emits a one-shot reminder telling Claude to invoke the `prep-compact` skill. The skill surveys the session in four buckets — goal+next, source-of-truth files, decisions+constraints+blockers, execution state — and emits a copy-paste `/compact <mini-schema>` block preserving what the post-compact session needs to resume correctly.
 
@@ -8,7 +8,7 @@ The reminder fires once per "delta-threshold-crossing" interval. `PostCompact` r
 
 ## Why
 
-Claude Code's auto-compact runs late — context is usually already degrading by the time it fires, and the summary it generates doesn't know which files, decisions, or blockers you wanted preserved. Running `/compact <instructions>` manually with a tailored prompt gives dramatically cleaner resumption, but requires you to remember to do it. This plugin nags you at the right moment and drafts the tailored prompt for you.
+Claude Code's auto-compact runs late. Context is usually already degrading by the time it fires, and the compaction summary that Claude generates by default is kinda bad. It often doesn't know which files, decisions, or blockers you wanted preserved. Running `/compact <instructions>` manually with a tailored prompt gives dramatically cleaner resumption, but requires you to remember to do it and design the prompt. This plugin nags you at the right moment and drafts the tailored prompt for you.
 
 ## Install
 
@@ -24,7 +24,6 @@ Run `/reload-plugins` if you installed mid-session.
 ## Requirements
 
 - **Claude Code v2.1.105 or later** for plugin-form installation.
-- **Bash + coreutils (`grep`, `sed`, `wc`, `tr`, `cat`, `mkdir`, `rm`, `head`, `cut`).** Present on Linux/macOS by default, and on Windows via Git Bash (Git for Windows installer). At least one of `sha1sum` (Linux / Git Bash) or `shasum -a 1` (macOS) is needed when Python is absent.
 - **Python 3 is preferred but not required.** When available on `PATH`, the hook uses `python`/`python3` for robust JSON parsing and SHA-1 hashing. When absent, the hook falls back to `grep`/`sed` extraction (relying on Claude Code's documented stdin JSON shape) plus `sha1sum` or `shasum -a 1` for hashing. Both paths are exercised in CI; either produces identical behavior.
 
 ## Usage
@@ -116,7 +115,3 @@ Then trigger by pushing a session past the threshold, or invoke `/prep-compact:p
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-## Credits
-
-Designed and tested over four Codex red-team rounds on the spec and four on the implementation plan before shipping, with production validation on two concurrent Claude Code sessions at the 4 MB threshold.
