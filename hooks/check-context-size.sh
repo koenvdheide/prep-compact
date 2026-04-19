@@ -13,6 +13,14 @@ MODE="${1:-}"
 # install at ~/.claude/hooks/).
 CACHE_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/cache}"
 THRESHOLD="${CLAUDE_CONTEXT_WARN_BYTES:-4000000}"
+# Validate threshold is a positive integer with no leading zeros; bash
+# arithmetic on a non-numeric env var under `set -u` would exit non-zero,
+# and `08` / `09` would hit "value too great for base" (bash reads leading-
+# zero literals as octal). Either breaks the fail-open guarantee.
+if ! [[ "$THRESHOLD" =~ ^(0|[1-9][0-9]*)$ ]]; then
+  printf 'check-context-size: ignoring invalid CLAUDE_CONTEXT_WARN_BYTES=%q (expected non-negative integer without leading zeros); using 4000000.\n' "$THRESHOLD" >&2
+  THRESHOLD=4000000
+fi
 
 if ! mkdir -p "$CACHE_DIR" 2>/dev/null; then
   printf 'check-context-size: cannot create %s; hook disabled this turn.\n' "$CACHE_DIR" >&2
@@ -98,8 +106,10 @@ else
 fi
 
 if [[ -z "$SAFE_SID" ]]; then
-  printf 'check-context-size: empty/unparseable session_id in %s stdin; skipping.\n' "${MODE:-UserPromptSubmit}" >&2
-  printf 'stdin was: %s\n' "$STDIN_JSON" >&2
+  # Terse diagnostic only — do NOT log raw stdin. On UserPromptSubmit the stdin
+  # contains the user's prompt text; logging it here would leak prompts into
+  # stderr (which some setups capture to disk or ship to Claude Code logs).
+  printf 'check-context-size: empty/unparseable session_id in %s stdin; skipping (stdin length=%d).\n' "${MODE:-UserPromptSubmit}" "${#STDIN_JSON}" >&2
   exit 0
 fi
 
@@ -125,9 +135,17 @@ if [[ "$MODE" == "RESET" ]]; then
   if [[ -n "$TRANSCRIPT_PATH" && -r "$TRANSCRIPT_PATH" ]]; then
     CURRENT_BYTES=$(wc -c <"$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ')
     if [[ "$CURRENT_BYTES" =~ ^[0-9]+$ ]]; then
-      printf '%s\n' "$CURRENT_BYTES" >"$BASELINE_FILE" 2>/dev/null || true
+      # Refuse to write through a pre-existing symlink (cache-dir poisoning
+      # mitigation: an attacker with write access to the cache dir could point
+      # the baseline file at an arbitrary user-writable file to truncate it).
+      if [[ -L "$BASELINE_FILE" ]]; then
+        printf 'check-context-size: refusing to write through symlink %s\n' "$BASELINE_FILE" >&2
+      else
+        printf '%s\n' "$CURRENT_BYTES" >"$BASELINE_FILE" 2>/dev/null || true
+      fi
     fi
   fi
+  # rm -f removes the link itself (does not follow); safe against flag-symlink attacks.
   rm -f "$FLAG" 2>/dev/null || true
   exit 0
 fi
@@ -156,6 +174,17 @@ if (( DELTA < THRESHOLD )); then
   # crossing gets a fresh reminder (covers the user-raised-threshold case
   # and the brief-post-compact-dip case where bytes hasn't exceeded baseline
   # by threshold yet).
+  rm -f "$FLAG" 2>/dev/null || true
+  exit 0
+fi
+
+# Symlink-poisoning check: MUST come before `-e "$FLAG"` (which follows the
+# link and would make us silent-exit thinking we already warned, while the
+# malicious symlink target persists unchanged).
+if [[ -L "$FLAG" ]]; then
+  printf 'check-context-size: refusing to write through symlink %s\n' "$FLAG" >&2
+  # Nuke the symlink itself (rm -f doesn't follow) so it doesn't keep tripping
+  # this branch on every future UserPromptSubmit.
   rm -f "$FLAG" 2>/dev/null || true
   exit 0
 fi

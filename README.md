@@ -12,11 +12,14 @@ Claude Code's auto-compact runs late — context is usually already degrading by
 
 ## Install
 
+Clone the repo and load via `--plugin-dir`:
+
 ```bash
-claude plugin install prep-compact@claude-plugins-official    # once listed
-# or directly from this repo:
-claude plugin install prep-compact@https://github.com/koenvdheide/prep-compact
+git clone https://github.com/koenvdheide/prep-compact.git
+claude --plugin-dir /path/to/prep-compact
 ```
+
+Run `/reload-plugins` if you installed mid-session.
 
 ## Requirements
 
@@ -92,7 +95,7 @@ The hook reads `session_id` and `transcript_path` from stdin. Nothing is sent ov
 ```bash
 git clone https://github.com/koenvdheide/prep-compact.git
 cd prep-compact
-bash test/run-tests.sh    # expects: All 37 assertions passed
+bash test/run-tests.sh    # expects: "All 53 assertions passed" on Linux/macOS, "All 49 assertions passed" on Windows Git Bash (4 symlink-defense tests skipped)
 ```
 
 To test the plugin locally without installing:

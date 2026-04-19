@@ -26,7 +26,13 @@ CACHE="$SANDBOX_HOME/.claude/cache"
 mkdir -p "$FIX" "$CACHE"
 FAIL=0
 PASS=0
-EXPECTED_PASS=41  # keep in sync with assertion count below; add/remove in both places when changing tests
+# Expected pass count depends on whether the platform supports real symlinks
+# for tests 25/26 (Windows Git Bash makes ln -s create text files; `[[ -L ]]`
+# returns false; the symlink-defense tests are skipped on those platforms).
+case "${OSTYPE:-}" in
+  msys*|cygwin*|win32) EXPECTED_PASS=49 ;;  # skip tests 25 + 26 (4 assertions)
+  *)                   EXPECTED_PASS=53 ;;
+esac
 
 make_random_file() { head -c "$2" </dev/urandom >"$1"; }
 
@@ -303,6 +309,61 @@ make_random_file "$FIX/big.jsonl" 2000
 OUT=$(printf '%s' "{\"session_id\":\"s23\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
   | CLAUDE_CONTEXT_WARN_BYTES=1000 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null)
 assert_true "malformed baseline -> ignored, absolute-threshold fires" '[[ "$OUT" == *"prep-compact"* ]]'
+
+# --- 24: invalid CLAUDE_CONTEXT_WARN_BYTES doesn't crash the hook (fail-open
+# guarantee); logs stderr and falls back to the 4 MB default. Covers both a
+# non-digit string ("not-a-number") and a leading-zero literal ("08") that
+# bash would otherwise interpret as invalid octal.
+cleanup
+make_random_file "$FIX/big.jsonl" 2000
+for BAD in "not-a-number" "08" "3.14" "-1"; do
+  ERRFILE=$(mktemp)
+  printf '%s' "{\"session_id\":\"s24\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
+    | CLAUDE_CONTEXT_WARN_BYTES="$BAD" HOME="$SANDBOX_HOME" bash "$HOOK" 2>"$ERRFILE"
+  EXIT_24=$?
+  assert_eq "bad CLAUDE_CONTEXT_WARN_BYTES=$BAD -> hook exits 0" "0" "$EXIT_24"
+  assert_true "bad CLAUDE_CONTEXT_WARN_BYTES=$BAD -> stderr warns 'ignoring invalid'" 'grep -q "ignoring invalid CLAUDE_CONTEXT_WARN_BYTES" "$ERRFILE"'
+  rm -f "$ERRFILE"
+done
+
+# Tests 25 + 26 exercise the symlink-poisoning defenses. They require real
+# POSIX symlinks (ln -s → `lrwxrwxrwx`). Windows Git Bash without the
+# MSYS=winsymlinks:nativestrict env setting makes ln -s create text files,
+# which defeats the `[[ -L ]]` check used in the defense. CI Linux runs the
+# tests; Windows CI and local Windows dev skip them.
+case "${OSTYPE:-}" in
+  msys*|cygwin*|win32)
+    # Symlink defense tested on Linux CI; skip on Windows. +0 assertions here.
+    :
+    ;;
+  *)
+    # --- 25: FLAG symlink-poisoning attempt refused (security).
+    cleanup
+    VICTIM_25=$(mktemp)
+    printf 'original-content\n' >"$VICTIM_25"
+    ln -sfn "$VICTIM_25" "$CACHE/compact-warned-s25"
+    make_random_file "$FIX/big.jsonl" 2000
+    ERRFILE=$(mktemp)
+    printf '%s' "{\"session_id\":\"s25\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
+      | CLAUDE_CONTEXT_WARN_BYTES=1000 HOME="$SANDBOX_HOME" bash "$HOOK" 2>"$ERRFILE" >/dev/null
+    assert_true "FLAG-symlink attack: stderr logs refusal" 'grep -q "refusing to write through symlink" "$ERRFILE"'
+    assert_eq "FLAG-symlink attack: victim file unchanged" "original-content" "$(cat "$VICTIM_25")"
+    rm -f "$VICTIM_25" "$CACHE/compact-warned-s25" "$ERRFILE"
+
+    # --- 26: BASELINE_FILE symlink-poisoning attempt refused during RESET.
+    cleanup
+    VICTIM_26=$(mktemp)
+    printf 'original-content\n' >"$VICTIM_26"
+    ln -sfn "$VICTIM_26" "$CACHE/compact-baseline-s26"
+    make_random_file "$FIX/big.jsonl" 2000
+    ERRFILE=$(mktemp)
+    printf '%s' "{\"session_id\":\"s26\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
+      | HOME="$SANDBOX_HOME" bash "$HOOK" RESET 2>"$ERRFILE" >/dev/null
+    assert_true "BASELINE-symlink attack: stderr logs refusal" 'grep -q "refusing to write through symlink" "$ERRFILE"'
+    assert_eq "BASELINE-symlink attack: victim file unchanged" "original-content" "$(cat "$VICTIM_26")"
+    rm -f "$VICTIM_26" "$CACHE/compact-baseline-s26" "$ERRFILE"
+    ;;
+esac
 
 cleanup
 rm -f "$FIX/transcript-"*.jsonl "$FIX/real-standin.jsonl" "$FIX/growing.jsonl" "$FIX/small-after-baseline.jsonl" "$CACHE"/compact-baseline-* 2>/dev/null

@@ -4,6 +4,23 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-04-19
+
+Security + correctness hardening discovered in a post-v0.2.0 release review. No new features; no breaking changes to shipped behavior.
+
+### Security
+
+- **Symlink-poisoning defense on flag and baseline writes.** Before writing `${CACHE_DIR}/compact-warned-<sid>` or `${CACHE_DIR}/compact-baseline-<sid>`, the hook now checks `[[ -L "$PATH" ]]` and refuses to follow a pre-existing symlink (logs a terse warning to stderr, removes the malicious symlink in the flag case to prevent repeat triggers). Previously `: >"$FLAG"` / `printf '%s\n' "$bytes" >"$BASELINE_FILE"` would have followed a symlink and truncated/overwritten the target. New tests 25 + 26 cover the defense (Linux/macOS CI only — Windows Git Bash `ln -s` creates text files, which the defense treats as regular files; the defense still works on platforms where real symlinks exist). Flag-check moved above the `-e` existence test, which follows symlinks.
+- **Stopped logging raw stdin on session_id parse failure.** The previous `printf 'stdin was: %s\n' "$STDIN_JSON" >&2` leaked the user's prompt text into stderr when session_id was missing/malformed; replaced with a terse `stdin length=N` marker.
+
+### Fixed
+
+- **`CLAUDE_CONTEXT_WARN_BYTES` validation.** A non-numeric value previously caused bash arithmetic to fail under `set -u`, violating the fail-open guarantee. Now: any value that doesn't match `^[0-9]+$` is ignored with a stderr warning and the 4,000,000-byte default is used. New test 24 covers this.
+
+### Docs
+
+- **Install instructions corrected.** The pre-v0.2.1 README's `claude plugin install prep-compact@https://github.com/...` syntax doesn't actually work (Claude Code's `plugin install` expects a marketplace source, not a raw repo URL). README now shows the `git clone` + `claude --plugin-dir` path, which works today.
+
 ## [0.2.0] - 2026-04-19
 
 Major behavior change: reminder now fires on delta-since-last-compact rather than total transcript bytes. Plus Python 3 is no longer a hard requirement.
@@ -18,7 +35,7 @@ Major behavior change: reminder now fires on delta-since-last-compact rather tha
 
 - `${CLAUDE_PLUGIN_DATA}/compact-baseline-<safe_session_id>` — per-session baseline file written by `PostCompact`. Stores byte count of the transcript at last compact. Cleaned up along with the rest of plugin data on uninstall (see `/plugin uninstall --keep-data` to preserve).
 - `PREP_COMPACT_DISABLE_PYTHON` environment variable for test use: when set (to any non-empty value), forces the hook's pure-bash extraction path regardless of Python availability. Not documented for end users.
-- Tests 17, 18, 19 exercise the pure-bash fallback (happy path + oversized-session-id hash fallback + grep/sed extraction pipeline unit tests). Test 20 exercises the full delta-tracking flow: `PostCompact` writes baseline, `UserPromptSubmit` with bytes=baseline stays silent, bytes=baseline+threshold fires a reminder that mentions "since last compact". Harness now runs 37 assertions across two lanes (python-preferred + `PREP_COMPACT_DISABLE_PYTHON=1`); false-green guard unchanged.
+- Tests 17, 18, 19 exercise the pure-bash fallback (happy path + oversized-session-id hash fallback + grep/sed extraction pipeline unit tests). Test 20 exercises the full delta-tracking flow: `PostCompact` writes baseline, `UserPromptSubmit` with bytes=baseline stays silent, bytes=baseline+threshold fires a reminder that mentions "since last compact". Harness now runs 47 assertions on Linux/macOS, 43 on Windows Git Bash (symlink-defense tests skipped) across two lanes (python-preferred + `PREP_COMPACT_DISABLE_PYTHON=1`); false-green guard unchanged.
 
 ### Notes
 
