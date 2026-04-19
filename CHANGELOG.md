@@ -4,6 +4,20 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-04-19
+
+### Changed
+
+- **SKILL.md: labeled subslots inside `decisions:` and `state:`.** Formalizes the previously emergent `decided=…; constraints=…; blockers=…` / `changes=…; tests=…; in_progress=…; agents=…` structure so post-compact resumers have canonical fields to scan, not freeform prose blobs.
+- **SKILL.md: `next:` must be verb-anchored.** Requires `edit <path>[:<symbol>]` / `run <command>` / `inspect <file> for <issue>` / `ask user <question>` / `wait for agent <id>` — not thematic descriptions like "continue refactoring". Sharpens the "I know the goal but don't know what to do first" failure mode after compact.
+- **SKILL.md: `files:` defined as the minimum set needed to execute `next`.** Ordered: spec/plan first, code files after in relevance order. Trims over-inclusive file enumerations.
+- **SKILL.md: self-check replaced with a round-trip loss audit.** Previous step was a scan: "is every field populated?" New step reconstructs the 4-bucket survey from the drafted `/compact` block and asks "what can't I recover from this alone?" — tests recoverability rather than completeness.
+- **SKILL.md: presentation block shortened.** Dropped the "invoke /prep-compact again later" reminder; kept the copy-and-run line plus one sentence on what happens post-compact.
+
+### Rationale
+
+Second-look review of SKILL.md in brainstorm mode surfaced four quality-improving proposals that didn't require changing the underlying hook or harness. Queued for v0.2.0: a conditional `last_failure=` / `refactor_seam=` anchor inside `state:` for debugging-heavy sessions; defer until we've observed real compacted debug sessions to calibrate the inclusion threshold. Rejected as standalone directions: full JSON output (escaping overhead > benefit for free-text `/compact` input), and generate-twice-and-diff as a self-check (measures randomness, not recoverability).
+
 ## [0.1.0] - 2026-04-19
 
 ### Added
