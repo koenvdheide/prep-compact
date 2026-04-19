@@ -30,8 +30,8 @@ PASS=0
 # for tests 25/26 (Windows Git Bash makes ln -s create text files; `[[ -L ]]`
 # returns false; the symlink-defense tests are skipped on those platforms).
 case "${OSTYPE:-}" in
-  msys*|cygwin*|win32) EXPECTED_PASS=49 ;;  # skip tests 25 + 26 (4 assertions)
-  *)                   EXPECTED_PASS=53 ;;
+  msys*|cygwin*|win32) EXPECTED_PASS=68 ;;  # skip tests 25 + 26 (4 assertions)
+  *)                   EXPECTED_PASS=72 ;;
 esac
 
 make_random_file() { head -c "$2" </dev/urandom >"$1"; }
@@ -70,42 +70,49 @@ assert_true() {
   fi
 }
 
-cleanup() { rm -f "$CACHE"/compact-warned-* 2>/dev/null || true; }
+cleanup() { rm -f "$CACHE"/compact-level-* 2>/dev/null || true; }
 
-# --- 1: below threshold + flag absent -> no-op
+# --- 1: below threshold + state absent -> no-op
 cleanup
 make_random_file "$FIX/small.jsonl" 500
 OUT=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook '{"session_id":"s1","transcript_path":"'"$FIX/small.jsonl"'"}')
 assert_eq "below+absent -> silent" "" "$OUT"
 
-# --- 2: above threshold + flag absent -> reminder + flag
+# --- 2: above soft threshold + state absent -> soft reminder + level file
 cleanup
 make_random_file "$FIX/big.jsonl" 2000
 OUT=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook '{"session_id":"s2","transcript_path":"'"$FIX/big.jsonl"'"}')
 assert_true "above+absent -> reminder contains 'prep-compact'" '[[ "$OUT" == *"prep-compact"* ]]'
-assert_true "above+absent -> flag created" '[[ -e "$CACHE/compact-warned-s2" ]]'
+assert_true "above+absent -> soft reminder carries level=soft marker" '[[ "$OUT" == *"level=soft"* ]]'
+assert_true "above+absent -> level file created" '[[ -e "$CACHE/compact-level-s2" ]]'
+assert_eq "above+absent -> level file content == 'soft'" "soft" "$(cat "$CACHE/compact-level-s2" | tr -d '[:space:]')"
+# Soft body copy regression guards — catches silent rewording that would
+# weaken the prompt-layer gate (e.g. dropping "Informational only" or the
+# "do not treat this reminder as the user's request" clause).
+assert_true "soft body: 'Informational only' phrase" '[[ "$OUT" == *"Informational only"* ]]'
+assert_true "soft body: 'do not treat this reminder as the user' phrase" '[[ "$OUT" == *"Do not treat this reminder as the user"* ]]'
 
-# --- 3: above threshold + flag present -> silent
+# --- 3: above threshold + state=soft -> silent (same-level, no upgrade)
 OUT=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook '{"session_id":"s2","transcript_path":"'"$FIX/big.jsonl"'"}')
-assert_eq "above+present -> silent" "" "$OUT"
+assert_eq "above+same-level -> silent" "" "$OUT"
 
-# --- 4: below threshold + flag present -> flag deleted (stale-flag cleanup)
-# The below-threshold branch clears the flag so the next above-threshold
+# --- 4: below threshold + state present -> state cleared (stale-level cleanup)
+# The below-threshold branch clears the state file so the next above-threshold
 # crossing fires a fresh reminder. Covers the threshold-change scenario where
 # a user raises CLAUDE_CONTEXT_WARN_BYTES after an earlier warning was emitted.
 cleanup
-touch "$CACHE/compact-warned-s4"
+printf 'soft\n' >"$CACHE/compact-level-s4"
 OUT=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook '{"session_id":"s4","transcript_path":"'"$FIX/small.jsonl"'"}')
-assert_true "below+present -> stale flag cleared" '[[ ! -e "$CACHE/compact-warned-s4" ]]'
+assert_true "below+present -> stale level cleared" '[[ ! -e "$CACHE/compact-level-s4" ]]'
 
-# --- 5: RESET scope — deletes only the target flag
+# --- 5: RESET scope — deletes only the target level file
 cleanup
-touch "$CACHE/compact-warned-target"
-touch "$CACHE/compact-warned-bystander"
+printf 'soft\n' >"$CACHE/compact-level-target"
+printf 'soft\n' >"$CACHE/compact-level-bystander"
 run_hook '{"session_id":"target"}' RESET >/dev/null
-assert_true "RESET -> target deleted" '[[ ! -e "$CACHE/compact-warned-target" ]]'
-assert_true "RESET -> bystander intact" '[[ -e "$CACHE/compact-warned-bystander" ]]'
-rm -f "$CACHE/compact-warned-bystander"
+assert_true "RESET -> target deleted" '[[ ! -e "$CACHE/compact-level-target" ]]'
+assert_true "RESET -> bystander intact" '[[ -e "$CACHE/compact-level-bystander" ]]'
+rm -f "$CACHE/compact-level-bystander"
 
 # --- 6: missing transcript -> no-op, exit 0
 OUT=$(run_hook '{"session_id":"s6","transcript_path":"/tmp/nope.jsonl"}'); RC=$?
@@ -121,17 +128,17 @@ OUT=$(run_hook 'not json'); assert_eq "malformed JSON -> silent" "" "$OUT"
 cleanup
 make_random_file "$FIX/big.jsonl" 2000
 OUT=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook '{"session_id":"../../../evil","transcript_path":"'"$FIX/big.jsonl"'"}' 2>/dev/null)
-# No flag escaped the cache dir
-ESCAPED=$(find "$SANDBOX_HOME/.claude" -path "$CACHE" -prune -o -name 'compact-warned-*' -print 2>/dev/null | head -n 1)
-assert_eq "path traversal -> no escaped flag" "" "$ESCAPED"
+# No level file escaped the cache dir
+ESCAPED=$(find "$SANDBOX_HOME/.claude" -path "$CACHE" -prune -o -name 'compact-level-*' -print 2>/dev/null | head -n 1)
+assert_eq "path traversal -> no escaped level file" "" "$ESCAPED"
 
 # --- 9: oversized session_id -> hashed fallback, not raw name
 cleanup
 LONG=$(printf 'a%.0s' {1..200})
 OUT=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook "{\"session_id\":\"$LONG\",\"transcript_path\":\"$FIX/big.jsonl\"}" 2>/dev/null)
-assert_true "oversized sid -> not used raw" '[[ ! -e "$CACHE/compact-warned-$LONG" ]]'
+assert_true "oversized sid -> not used raw" '[[ ! -e "$CACHE/compact-level-$LONG" ]]'
 SHA1=$(python -c "import hashlib; print(hashlib.sha1(b'$LONG').hexdigest())")
-assert_true "oversized sid -> hash flag created" '[[ -e "$CACHE/compact-warned-$SHA1" ]]'
+assert_true "oversized sid -> hash level file created" '[[ -e "$CACHE/compact-level-$SHA1" ]]'
 
 # --- 10: env var override lowers threshold
 cleanup
@@ -164,11 +171,11 @@ else
   FAIL=$((FAIL+1))
 fi
 
-# --- 12: empty session_id logs stderr + creates no flag
+# --- 12: empty session_id logs stderr + creates no level file
 cleanup
 ERRFILE=$(run_hook_stderr '{"session_id":"","transcript_path":"'"$FIX/big.jsonl"'"}')
 assert_true "empty session_id -> stderr contains 'empty/unparseable'" 'grep -q "empty/unparseable session_id" "$ERRFILE"'
-assert_true "empty session_id -> no flag created" '! ls "$CACHE"/compact-warned-* 2>/dev/null | grep -q .'
+assert_true "empty session_id -> no level file created" '! ls "$CACHE"/compact-level-* 2>/dev/null | grep -q .'
 rm -f "$ERRFILE"
 
 # --- 14: CLAUDE_PLUGIN_DATA overrides the cache-dir fallback
@@ -179,8 +186,8 @@ mkdir -p "$PDATA"
 make_random_file "$FIX/big.jsonl" 2000
 printf '%s' '{"session_id":"s14","transcript_path":"'"$FIX/big.jsonl"'"}' \
   | CLAUDE_PLUGIN_DATA="$PDATA" CLAUDE_CONTEXT_WARN_BYTES=1000 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null >/dev/null
-assert_true "CLAUDE_PLUGIN_DATA -> flag created inside plugin data dir" '[[ -e "$PDATA/compact-warned-s14" ]]'
-assert_true "CLAUDE_PLUGIN_DATA -> no flag in fallback cache" '[[ ! -e "$CACHE/compact-warned-s14" ]]'
+assert_true "CLAUDE_PLUGIN_DATA -> level file created inside plugin data dir" '[[ -e "$PDATA/compact-level-s14" ]]'
+assert_true "CLAUDE_PLUGIN_DATA -> no level file in fallback cache" '[[ ! -e "$CACHE/compact-level-s14" ]]'
 
 # --- 17: pure-bash fallback (PREP_COMPACT_DISABLE_PYTHON=1) happy path
 cleanup
@@ -188,14 +195,14 @@ make_random_file "$FIX/big.jsonl" 2000
 OUT=$(printf '%s' "{\"session_id\":\"s17\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
   | CLAUDE_CONTEXT_WARN_BYTES=1000 PREP_COMPACT_DISABLE_PYTHON=1 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null)
 assert_true "fallback: above+absent -> reminder" '[[ "$OUT" == *"prep-compact"* ]]'
-assert_true "fallback: above+absent -> flag created" '[[ -e "$CACHE/compact-warned-s17" ]]'
+assert_true "fallback: above+absent -> level file created" '[[ -e "$CACHE/compact-level-s17" ]]'
 
 # --- 18: pure-bash fallback + oversized session_id -> sha1sum/shasum hash fallback, not raw
 cleanup
 LONG_SID=$(printf 'b%.0s' {1..200})
 OUT=$(printf '%s' "{\"session_id\":\"$LONG_SID\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
   | CLAUDE_CONTEXT_WARN_BYTES=1000 PREP_COMPACT_DISABLE_PYTHON=1 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null)
-assert_true "fallback: oversized sid not used raw" '[[ ! -e "$CACHE/compact-warned-$LONG_SID" ]]'
+assert_true "fallback: oversized sid not used raw" '[[ ! -e "$CACHE/compact-level-$LONG_SID" ]]'
 # Compute expected hash the same way the hook's sha1_hex does (prefer sha1sum, else shasum).
 if command -v sha1sum >/dev/null 2>&1; then
   EXPECTED_HASH=$(printf '%s' "$LONG_SID" | sha1sum | cut -d' ' -f1)
@@ -205,12 +212,12 @@ else
   EXPECTED_HASH=""
 fi
 if [[ -n "$EXPECTED_HASH" ]]; then
-  assert_true "fallback: oversized sid -> sha1 hash flag created" '[[ -e "$CACHE/compact-warned-$EXPECTED_HASH" ]]'
+  assert_true "fallback: oversized sid -> sha1 hash level file created" '[[ -e "$CACHE/compact-level-$EXPECTED_HASH" ]]'
 else
   # Harness is running on a box with neither sha1sum nor shasum — assert the
-  # tr-truncation path produced *some* flag under the cache dir.
-  FLAGS=$(find "$CACHE" -name 'compact-warned-*' 2>/dev/null | wc -l | tr -d ' ')
-  assert_true "fallback: oversized sid -> truncation flag created (no sha1/shasum)" '[[ "$FLAGS" -gt 0 ]]'
+  # tr-truncation path produced *some* level file under the cache dir.
+  LEVELS=$(find "$CACHE" -name 'compact-level-*' 2>/dev/null | wc -l | tr -d ' ')
+  assert_true "fallback: oversized sid -> truncation level file created (no sha1/shasum)" '[[ "$LEVELS" -gt 0 ]]'
 fi
 
 # --- 19: pure-bash fallback extraction — unit tests of the grep+sed pipeline.
@@ -233,16 +240,16 @@ printf '%s' '{"session_id":"s13","transcript_path":"'"$FIX/big.jsonl"'"}' | HOME
 assert_true "mkdir fail -> stderr 'cannot create'" 'grep -q "cannot create" "$ERRFILE"'
 rm -f "$ERRFILE"
 
-# --- 15: threshold change — stale low-threshold flag clears when a higher
+# --- 15: threshold change — stale low-threshold state clears when a higher
 # threshold is applied. Regression guard for the `CLAUDE_CONTEXT_WARN_BYTES`
 # config-change scenario.
 cleanup
 make_random_file "$FIX/medium.jsonl" 1500
 OUT=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook '{"session_id":"s15","transcript_path":"'"$FIX/medium.jsonl"'"}')
-assert_true "low-threshold crossing creates flag" '[[ -e "$CACHE/compact-warned-s15" ]]'
-# Raise threshold above current bytes (1500 < 2000): flag should clear.
+assert_true "low-threshold crossing creates level file" '[[ -e "$CACHE/compact-level-s15" ]]'
+# Raise threshold above current bytes (1500 < 2000): level should clear.
 OUT=$(CLAUDE_CONTEXT_WARN_BYTES=2000 run_hook '{"session_id":"s15","transcript_path":"'"$FIX/medium.jsonl"'"}')
-assert_true "raised threshold > bytes -> stale flag cleared" '[[ ! -e "$CACHE/compact-warned-s15" ]]'
+assert_true "raised threshold > bytes -> stale level cleared" '[[ ! -e "$CACHE/compact-level-s15" ]]'
 
 # --- 16: above-threshold -> RESET -> above-threshold rewarns. End-to-end
 # PostCompact re-arming check (complements test 5 which only checks RESET scope).
@@ -251,7 +258,7 @@ make_random_file "$FIX/big.jsonl" 2000
 OUT1=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook '{"session_id":"s16","transcript_path":"'"$FIX/big.jsonl"'"}')
 assert_true "first crossing emits reminder" '[[ "$OUT1" == *"prep-compact"* ]]'
 run_hook '{"session_id":"s16"}' RESET >/dev/null
-assert_true "RESET cleared flag" '[[ ! -e "$CACHE/compact-warned-s16" ]]'
+assert_true "RESET cleared level" '[[ ! -e "$CACHE/compact-level-s16" ]]'
 OUT2=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook '{"session_id":"s16","transcript_path":"'"$FIX/big.jsonl"'"}')
 assert_true "second crossing after RESET emits fresh reminder" '[[ "$OUT2" == *"prep-compact"* ]]'
 
@@ -279,15 +286,17 @@ assert_true "post-RESET, delta above threshold -> reminder fires" '[[ "$OUT" == 
 assert_true "post-RESET reminder mentions delta vs baseline" '[[ "$OUT" == *"since last compact"* ]]'
 
 # --- 21: pathless RESET with pre-existing baseline preserves the baseline and
-# clears the flag. Documents the v0.2.0 behavior where a PostCompact event
+# clears the level file. Documents the v0.2.0 behavior where a PostCompact event
 # without transcript_path in stdin cannot refresh the baseline — known
-# limitation, but at least the flag-clear path still runs so the next above-
+# limitation, but at least the level-clear path still runs so the next above-
 # delta-threshold crossing will fire correctly (relative to old baseline).
+# Also covers Codex r2 ask: "pathless PostCompact clearing both flags" — with
+# single-state model the level file replaces both soft+hard flags.
 cleanup
 printf '%s\n' 2500 >"$CACHE/compact-baseline-s21"
-touch "$CACHE/compact-warned-s21"
+printf 'critical\n' >"$CACHE/compact-level-s21"
 printf '%s' '{"session_id":"s21"}' | HOME="$SANDBOX_HOME" bash "$HOOK" RESET 2>/dev/null
-assert_true "pathless RESET clears warned flag" '[[ ! -e "$CACHE/compact-warned-s21" ]]'
+assert_true "pathless RESET clears level file (regardless of prior level value)" '[[ ! -e "$CACHE/compact-level-s21" ]]'
 PRESERVED=$(cat "$CACHE/compact-baseline-s21" 2>/dev/null | tr -d '[:space:]')
 assert_eq "pathless RESET preserves existing baseline" "2500" "$PRESERVED"
 
@@ -310,10 +319,10 @@ OUT=$(printf '%s' "{\"session_id\":\"s23\",\"transcript_path\":\"$FIX/big.jsonl\
   | CLAUDE_CONTEXT_WARN_BYTES=1000 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null)
 assert_true "malformed baseline -> ignored, absolute-threshold fires" '[[ "$OUT" == *"prep-compact"* ]]'
 
-# --- 24: invalid CLAUDE_CONTEXT_WARN_BYTES doesn't crash the hook (fail-open
-# guarantee); logs stderr and falls back to the 4 MB default. Covers both a
-# non-digit string ("not-a-number") and a leading-zero literal ("08") that
-# bash would otherwise interpret as invalid octal.
+# --- 24: invalid CLAUDE_CONTEXT_WARN_BYTES / CLAUDE_CONTEXT_CRITICAL_BYTES
+# doesn't crash the hook (fail-open guarantee); logs stderr and falls back to
+# the default. Covers non-digit strings, leading-zero literals (would be read
+# as invalid octal by bash arithmetic), floats, negatives.
 cleanup
 make_random_file "$FIX/big.jsonl" 2000
 for BAD in "not-a-number" "08" "3.14" "-1"; do
@@ -325,6 +334,75 @@ for BAD in "not-a-number" "08" "3.14" "-1"; do
   assert_true "bad CLAUDE_CONTEXT_WARN_BYTES=$BAD -> stderr warns 'ignoring invalid'" 'grep -q "ignoring invalid CLAUDE_CONTEXT_WARN_BYTES" "$ERRFILE"'
   rm -f "$ERRFILE"
 done
+# Single-value smoke test for CRITICAL invalid: hook still exits 0 and warns.
+cleanup
+ERRFILE=$(mktemp)
+printf '%s' "{\"session_id\":\"s24c\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
+  | CLAUDE_CONTEXT_CRITICAL_BYTES="bogus" HOME="$SANDBOX_HOME" bash "$HOOK" 2>"$ERRFILE"
+EXIT_24C=$?
+assert_eq "bad CLAUDE_CONTEXT_CRITICAL_BYTES=bogus -> hook exits 0" "0" "$EXIT_24C"
+assert_true "bad CLAUDE_CONTEXT_CRITICAL_BYTES=bogus -> stderr warns 'ignoring invalid'" 'grep -q "ignoring invalid CLAUDE_CONTEXT_CRITICAL_BYTES" "$ERRFILE"'
+rm -f "$ERRFILE"
+
+# --- 27: critical threshold fires auto-invoke reminder + writes level=critical
+cleanup
+make_random_file "$FIX/huge.jsonl" 4000
+OUT=$(CLAUDE_CONTEXT_WARN_BYTES=1000 CLAUDE_CONTEXT_CRITICAL_BYTES=2000 \
+  run_hook '{"session_id":"s27","transcript_path":"'"$FIX/huge.jsonl"'"}')
+assert_true "hard crossing: output carries level=critical marker" '[[ "$OUT" == *"level=critical"* ]]'
+assert_true "hard crossing: level file exists" '[[ -e "$CACHE/compact-level-s27" ]]'
+assert_eq "hard crossing: level file content == 'critical'" "critical" "$(cat "$CACHE/compact-level-s27" | tr -d '[:space:]')"
+# Critical body copy regression guards — catches silent rewording that would
+# lose the urgency phrase or the auto-invoke instruction.
+assert_true "critical body: 'critically high' phrase" '[[ "$OUT" == *"critically high"* ]]'
+assert_true "critical body: 'Invoke the prep-compact skill' phrase" '[[ "$OUT" == *"Invoke the prep-compact skill"* ]]'
+
+# --- 28: stale-critical re-arm after CRITICAL raised. Regression guard for the
+# Codex r2 finding: with two-flag bookkeeping, a user who raised CRITICAL
+# after the hard fired would never see the hard reminder again for that cycle.
+# Single-state model downgrades silently when delta drops below the current
+# level's threshold, so the next genuine crossing re-fires cleanly.
+cleanup
+make_random_file "$FIX/growing.jsonl" 1500
+# Phase 1: SOFT=500, CRITICAL=1000, bytes=1500 -> target=critical.
+OUT1=$(CLAUDE_CONTEXT_WARN_BYTES=500 CLAUDE_CONTEXT_CRITICAL_BYTES=1000 \
+  run_hook '{"session_id":"s28","transcript_path":"'"$FIX/growing.jsonl"'"}')
+assert_true "phase 1: critical emitted" '[[ "$OUT1" == *"level=critical"* ]]'
+# Phase 2: user raises CRITICAL to 2000. bytes=1500 still > SOFT=500 but <
+# CRITICAL=2000 -> target=soft. Current state=critical -> downgrade SILENTLY.
+OUT2=$(CLAUDE_CONTEXT_WARN_BYTES=500 CLAUDE_CONTEXT_CRITICAL_BYTES=2000 \
+  run_hook '{"session_id":"s28","transcript_path":"'"$FIX/growing.jsonl"'"}')
+assert_eq "phase 2: silent (downgrade)" "" "$OUT2"
+assert_eq "phase 2: level file downgraded to 'soft'" "soft" "$(cat "$CACHE/compact-level-s28" | tr -d '[:space:]')"
+# Phase 3: transcript grows past new CRITICAL=2000. target=critical again,
+# current=soft -> upgrade fires hard reminder.
+head -c 2500 </dev/urandom >"$FIX/growing.jsonl"
+OUT3=$(CLAUDE_CONTEXT_WARN_BYTES=500 CLAUDE_CONTEXT_CRITICAL_BYTES=2000 \
+  run_hook '{"session_id":"s28","transcript_path":"'"$FIX/growing.jsonl"'"}')
+assert_true "phase 3: critical re-emitted after rise" '[[ "$OUT3" == *"level=critical"* ]]'
+
+# --- 29: invalid threshold ordering (CRITICAL <= WARN) disables hard for the
+# turn with a stderr warning. Hook must not silently swap (which would mask
+# the config error). Covers both `<` and `==` cases.
+cleanup
+make_random_file "$FIX/big.jsonl" 2000
+# 29a: CRITICAL < WARN
+ERRFILE=$(mktemp)
+OUT=$(printf '%s' "{\"session_id\":\"s29a\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
+  | CLAUDE_CONTEXT_WARN_BYTES=1000 CLAUDE_CONTEXT_CRITICAL_BYTES=500 \
+    HOME="$SANDBOX_HOME" bash "$HOOK" 2>"$ERRFILE")
+assert_true "CRITICAL<WARN: stderr warns 'must exceed'" 'grep -q "must exceed CLAUDE_CONTEXT_WARN_BYTES" "$ERRFILE"'
+assert_true "CRITICAL<WARN: hard disabled -> soft reminder emitted" '[[ "$OUT" == *"level=soft"* ]]'
+rm -f "$ERRFILE"
+# 29b: CRITICAL == WARN (boundary; the hook's `<=` check must reject equality too).
+cleanup
+ERRFILE=$(mktemp)
+OUT=$(printf '%s' "{\"session_id\":\"s29b\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
+  | CLAUDE_CONTEXT_WARN_BYTES=1000 CLAUDE_CONTEXT_CRITICAL_BYTES=1000 \
+    HOME="$SANDBOX_HOME" bash "$HOOK" 2>"$ERRFILE")
+assert_true "CRITICAL==WARN: stderr warns 'must exceed'" 'grep -q "must exceed CLAUDE_CONTEXT_WARN_BYTES" "$ERRFILE"'
+assert_true "CRITICAL==WARN: hard disabled -> soft reminder emitted" '[[ "$OUT" == *"level=soft"* ]]'
+rm -f "$ERRFILE"
 
 # Tests 25 + 26 exercise the symlink-poisoning defenses. They require real
 # POSIX symlinks (ln -s → `lrwxrwxrwx`). Windows Git Bash without the
@@ -337,18 +415,18 @@ case "${OSTYPE:-}" in
     :
     ;;
   *)
-    # --- 25: FLAG symlink-poisoning attempt refused (security).
+    # --- 25: LEVEL_FILE symlink-poisoning attempt refused (security).
     cleanup
     VICTIM_25=$(mktemp)
     printf 'original-content\n' >"$VICTIM_25"
-    ln -sfn "$VICTIM_25" "$CACHE/compact-warned-s25"
+    ln -sfn "$VICTIM_25" "$CACHE/compact-level-s25"
     make_random_file "$FIX/big.jsonl" 2000
     ERRFILE=$(mktemp)
     printf '%s' "{\"session_id\":\"s25\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
       | CLAUDE_CONTEXT_WARN_BYTES=1000 HOME="$SANDBOX_HOME" bash "$HOOK" 2>"$ERRFILE" >/dev/null
-    assert_true "FLAG-symlink attack: stderr logs refusal" 'grep -q "refusing to write through symlink" "$ERRFILE"'
-    assert_eq "FLAG-symlink attack: victim file unchanged" "original-content" "$(cat "$VICTIM_25")"
-    rm -f "$VICTIM_25" "$CACHE/compact-warned-s25" "$ERRFILE"
+    assert_true "LEVEL-symlink attack: stderr logs refusal" 'grep -q "refusing to .* symlink" "$ERRFILE"'
+    assert_eq "LEVEL-symlink attack: victim file unchanged" "original-content" "$(cat "$VICTIM_25")"
+    rm -f "$VICTIM_25" "$CACHE/compact-level-s25" "$ERRFILE"
 
     # --- 26: BASELINE_FILE symlink-poisoning attempt refused during RESET.
     cleanup
@@ -366,7 +444,7 @@ case "${OSTYPE:-}" in
 esac
 
 cleanup
-rm -f "$FIX/transcript-"*.jsonl "$FIX/real-standin.jsonl" "$FIX/growing.jsonl" "$FIX/small-after-baseline.jsonl" "$CACHE"/compact-baseline-* 2>/dev/null
+rm -f "$FIX/transcript-"*.jsonl "$FIX/real-standin.jsonl" "$FIX/growing.jsonl" "$FIX/small-after-baseline.jsonl" "$FIX/huge.jsonl" "$CACHE"/compact-baseline-* 2>/dev/null
 
 printf '\n'
 if [[ "$FAIL" -eq 0 && "$PASS" -eq "$EXPECTED_PASS" ]]; then
