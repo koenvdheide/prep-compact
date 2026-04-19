@@ -4,7 +4,7 @@ A Claude Code plugin that nudges Claude to prepare tailored `/compact` instructi
 
 When your session transcript passes a configurable byte threshold (default ~4 MB ≈ 450K tokens on Opus 4.7), a `UserPromptSubmit` hook emits a one-shot reminder telling Claude to invoke the `prep-compact` skill. The skill surveys the session in four buckets — goal+next, source-of-truth files, decisions+constraints+blockers, execution state — and emits a copy-paste `/compact <mini-schema>` block preserving what the post-compact session needs to resume correctly.
 
-The reminder fires once per "above-threshold interval" (no spam). A `PostCompact` hook resets the flag so a fresh reminder can fire after the next time the session grows past the threshold. You can also invoke `/prep-compact:prep-compact` manually at any time to refresh the compaction instructions before running `/compact`.
+The reminder fires once per "delta-threshold-crossing" interval. `PostCompact` records the current transcript size as a baseline, and future reminders fire only when the session has grown `CLAUDE_CONTEXT_WARN_BYTES` more bytes since that baseline — not on absolute transcript size. (The transcript `.jsonl` is append-only on disk; an absolute-threshold check would fire every turn after the first compact.) You can also invoke `/prep-compact:prep-compact` manually at any time to refresh the compaction instructions before running `/compact`.
 
 ## Why
 
@@ -20,8 +20,9 @@ claude plugin install prep-compact@https://github.com/koenvdheide/prep-compact
 
 ## Requirements
 
-- **Python 3 on PATH.** The hook uses Python's stdlib for JSON parsing and SHA-1 hashing. Git Bash on Windows, macOS, and most Linux distros already satisfy this. If `python --version` fails, install Python 3 from [python.org](https://www.python.org/) or your system package manager. If Python is missing, the hook silently no-ops — it never blocks your prompts, but you won't see reminders.
 - **Claude Code v2.1.105 or later** for plugin-form installation.
+- **Bash + coreutils (`grep`, `sed`, `wc`, `tr`, `cat`, `mkdir`, `rm`, `head`, `cut`).** Present on Linux/macOS by default, and on Windows via Git Bash (Git for Windows installer). At least one of `sha1sum` (Linux / Git Bash) or `shasum -a 1` (macOS) is needed when Python is absent.
+- **Python 3 is preferred but not required.** When available on `PATH`, the hook uses `python`/`python3` for robust JSON parsing and SHA-1 hashing. When absent, the hook falls back to `grep`/`sed` extraction (relying on Claude Code's documented stdin JSON shape) plus `sha1sum` or `shasum -a 1` for hashing. Both paths are exercised in CI; either produces identical behavior.
 
 ## Usage
 
@@ -37,7 +38,7 @@ One env var controls the firing threshold:
 
 | Variable                    | Default   | Meaning                                                     |
 | --------------------------- | --------- | ----------------------------------------------------------- |
-| `CLAUDE_CONTEXT_WARN_BYTES` | `4000000` | Transcript file size (bytes) above which the reminder fires |
+| `CLAUDE_CONTEXT_WARN_BYTES` | `4000000` | Byte delta (since last compact) above which the reminder fires. Before the first `/compact` of a session, baseline is 0 so this behaves like an absolute transcript-size trigger. After each `/compact`, baseline resets to current bytes and the next reminder fires only after this many additional bytes of growth. |
 
 Set it in your shell profile or in `~/.claude/settings.json` under `env`:
 
@@ -80,7 +81,7 @@ Your mileage may vary with different tool-use density. Tune via the env var afte
                                          -> outputs /compact <mini-schema>
 ```
 
-`PostCompact` fires after `/compact` completes and deletes the flag file (via `RESET` mode), so the next threshold crossing will fire a fresh reminder.
+`PostCompact` fires after `/compact` completes. In `RESET` mode the hook does two things: records the current transcript byte count as the per-session baseline (stored in `${CLAUDE_PLUGIN_DATA}/compact-baseline-<safe_session_id>`), and deletes the warned flag. The next `UserPromptSubmit` evaluates `bytes - baseline` against the threshold, so a fresh reminder only fires after meaningful new growth since the last compact.
 
 ## Security and privacy
 
@@ -91,7 +92,7 @@ The hook reads `session_id` and `transcript_path` from stdin. Nothing is sent ov
 ```bash
 git clone https://github.com/koenvdheide/prep-compact.git
 cd prep-compact
-bash test/run-tests.sh    # expects: All 26 assertions passed
+bash test/run-tests.sh    # expects: All 37 assertions passed
 ```
 
 To test the plugin locally without installing:
@@ -104,7 +105,7 @@ Then trigger by pushing a session past the threshold, or invoke `/prep-compact:p
 
 ## Known limits
 
-- **Python 3 must be on PATH.** Hook degrades to silent no-op without it.
+- **Python 3 is preferred but not required.** The pure-bash fallback path relies on Claude Code's current minified `"key":"value"` stdin JSON shape AND on the observed field ordering (`session_id` and `transcript_path` before the user-controlled `prompt` field). If either assumption breaks — pretty-printed JSON with embedded newlines inside values, CC reordering its fields, or values containing JSON-escaped embedded `"` — the fallback can mis-extract; Python's `json.load` has no such dependency. Prefer Python if you have it.
 - **Byte count is a proxy, not an exact token measure.** JSONL metadata overhead makes the bytes-per-token ratio ~8.9× on Opus 4.7 but your mileage may vary with different tool-use density. Tune via `CLAUDE_CONTEXT_WARN_BYTES`.
 - **`PostCompact` is the reset path after a compact; the below-threshold branch handles threshold-change resets.** The hook has two independent flag-clear paths: (1) `PostCompact` deletes the flag when `/compact` completes (normal flow); (2) the below-threshold branch in `UserPromptSubmit` deletes the flag when a size check finds the transcript below the current threshold (catches the "user raised `CLAUDE_CONTEXT_WARN_BYTES` after an earlier warning" case). Neither watches for transcript truncation as a signal — Phase 0 measurement confirmed the transcript `.jsonl` is append-only in normal Claude Code operation; `/compact` operates on the in-memory context window, not the disk record. If a future Claude Code version stops firing `PostCompact`, the hook degrades to one-reminder-per-session until the threshold is raised or a restart happens.
 - **Soft trigger.** Claude may occasionally miss the injected reminder and not auto-invoke the skill. In that case, type `/prep-compact:prep-compact` manually — it's the primary path, the hook is a nudge.

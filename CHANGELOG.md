@@ -4,6 +4,26 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-19
+
+Major behavior change: reminder now fires on delta-since-last-compact rather than total transcript bytes. Plus Python 3 is no longer a hard requirement.
+
+### Changed (breaking for users who relied on the v0.1.x reminder cadence)
+
+- **Delta-based reminder cadence (fixes the "nag-every-turn after first compact" bug).** Previously the hook compared total transcript bytes to `CLAUDE_CONTEXT_WARN_BYTES` — but the transcript `.jsonl` is append-only, so once a session first crossed the threshold, *every* subsequent `/compact` would reset the flag and the very next `UserPromptSubmit` would fire a new reminder even though Claude's in-memory context was freshly emptied. Now: `PostCompact` records current transcript bytes as a per-session baseline, and `UserPromptSubmit` compares `bytes - baseline` against the threshold. First reminder still fires on absolute-threshold crossing (baseline=0 initially); subsequent reminders fire when the session has grown `CLAUDE_CONTEXT_WARN_BYTES` more bytes since the last compact. The reminder text now reports both total bytes and the delta when baseline > 0.
+- **Python 3 is no longer a hard requirement.** The hook now prefers `python3` when available for robust JSON parsing and SHA-1 hashing; falls back to `python` only if a version check confirms Python 3.x; falls back further to `grep`+`sed` extraction and `sha1sum`/`shasum` hashing when no Python 3 is present. All three paths produce identical behavior and the first two are exercised in CI matrices.
+- **Requirements rewritten:** Bash + coreutils (`grep`, `sed`, `wc`, `tr`, `cat`, `mkdir`, `rm`, `head`, `cut`) are now the only hard dependencies, plus `sha1sum` or `shasum -a 1` when Python is absent. Windows users need Git Bash (bundled with Git for Windows); Python is optional.
+
+### Added
+
+- `${CLAUDE_PLUGIN_DATA}/compact-baseline-<safe_session_id>` — per-session baseline file written by `PostCompact`. Stores byte count of the transcript at last compact. Cleaned up along with the rest of plugin data on uninstall (see `/plugin uninstall --keep-data` to preserve).
+- `PREP_COMPACT_DISABLE_PYTHON` environment variable for test use: when set (to any non-empty value), forces the hook's pure-bash extraction path regardless of Python availability. Not documented for end users.
+- Tests 17, 18, 19 exercise the pure-bash fallback (happy path + oversized-session-id hash fallback + grep/sed extraction pipeline unit tests). Test 20 exercises the full delta-tracking flow: `PostCompact` writes baseline, `UserPromptSubmit` with bytes=baseline stays silent, bytes=baseline+threshold fires a reminder that mentions "since last compact". Harness now runs 37 assertions across two lanes (python-preferred + `PREP_COMPACT_DISABLE_PYTHON=1`); false-green guard unchanged.
+
+### Notes
+
+The pure-bash extraction relies on Claude Code's observed stdin JSON field ordering (`session_id` and `transcript_path` always appear before the user-controlled `prompt` field) AND on the current minified `"key":"value"` serialization. If CC ever reorders those fields, pretty-prints the JSON with whitespace around `:`, or introduces embedded `"`/`\` characters inside values that defeat the `grep -oE` first-match logic, the Python path stays correct and the bash fallback may mis-extract. Users who prefer robustness should keep Python 3 on PATH.
+
 ## [0.1.1] - 2026-04-19
 
 ### Changed

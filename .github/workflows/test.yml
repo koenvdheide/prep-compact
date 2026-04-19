@@ -30,5 +30,10 @@ jobs:
           python --version || python3 --version
           uname -a || systeminfo | head -10
 
-      - name: Run test harness
+      - name: Run test harness (python-preferred path)
+        run: bash test/run-tests.sh
+
+      - name: Run test harness (pure-bash fallback path)
+        env:
+          PREP_COMPACT_DISABLE_PYTHON: "1"
         run: bash test/run-tests.sh

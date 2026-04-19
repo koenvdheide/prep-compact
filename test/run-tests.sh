@@ -26,7 +26,7 @@ CACHE="$SANDBOX_HOME/.claude/cache"
 mkdir -p "$FIX" "$CACHE"
 FAIL=0
 PASS=0
-EXPECTED_PASS=26  # keep in sync with assertion count below; add/remove in both places when changing tests
+EXPECTED_PASS=41  # keep in sync with assertion count below; add/remove in both places when changing tests
 
 make_random_file() { head -c "$2" </dev/urandom >"$1"; }
 
@@ -143,7 +143,10 @@ if [[ -s "$FIX/ups-real.json" ]]; then
   REAL_TP=$(python -c "import json,sys; print(json.load(sys.stdin).get('transcript_path',''))" <"$FIX/ups-real.json")
   if [[ -z "$REAL_TP" || ! -r "$REAL_TP" ]]; then
     cp "$FIX/big.jsonl" "$FIX/real-standin.jsonl"
-    REAL_JSON=$(python -c "import json,sys; d=json.load(sys.stdin); d['transcript_path']='$FIX/real-standin.jsonl'; print(json.dumps(d))" <"$FIX/ups-real.json")
+    # Use minified JSON (separators=(',',':')) to match Claude Code's actual
+    # stdin shape. Python's default dumps adds ": " spaces; CC and the hook's
+    # bash fallback both expect no spaces around the field separator.
+    REAL_JSON=$(python -c "import json,sys; d=json.load(sys.stdin); d['transcript_path']='$FIX/real-standin.jsonl'; print(json.dumps(d, separators=(',', ':')))" <"$FIX/ups-real.json")
   else
     REAL_JSON=$(cat "$FIX/ups-real.json")
   fi
@@ -172,6 +175,49 @@ printf '%s' '{"session_id":"s14","transcript_path":"'"$FIX/big.jsonl"'"}' \
   | CLAUDE_PLUGIN_DATA="$PDATA" CLAUDE_CONTEXT_WARN_BYTES=1000 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null >/dev/null
 assert_true "CLAUDE_PLUGIN_DATA -> flag created inside plugin data dir" '[[ -e "$PDATA/compact-warned-s14" ]]'
 assert_true "CLAUDE_PLUGIN_DATA -> no flag in fallback cache" '[[ ! -e "$CACHE/compact-warned-s14" ]]'
+
+# --- 17: pure-bash fallback (PREP_COMPACT_DISABLE_PYTHON=1) happy path
+cleanup
+make_random_file "$FIX/big.jsonl" 2000
+OUT=$(printf '%s' "{\"session_id\":\"s17\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
+  | CLAUDE_CONTEXT_WARN_BYTES=1000 PREP_COMPACT_DISABLE_PYTHON=1 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null)
+assert_true "fallback: above+absent -> reminder" '[[ "$OUT" == *"prep-compact"* ]]'
+assert_true "fallback: above+absent -> flag created" '[[ -e "$CACHE/compact-warned-s17" ]]'
+
+# --- 18: pure-bash fallback + oversized session_id -> sha1sum/shasum hash fallback, not raw
+cleanup
+LONG_SID=$(printf 'b%.0s' {1..200})
+OUT=$(printf '%s' "{\"session_id\":\"$LONG_SID\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
+  | CLAUDE_CONTEXT_WARN_BYTES=1000 PREP_COMPACT_DISABLE_PYTHON=1 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null)
+assert_true "fallback: oversized sid not used raw" '[[ ! -e "$CACHE/compact-warned-$LONG_SID" ]]'
+# Compute expected hash the same way the hook's sha1_hex does (prefer sha1sum, else shasum).
+if command -v sha1sum >/dev/null 2>&1; then
+  EXPECTED_HASH=$(printf '%s' "$LONG_SID" | sha1sum | cut -d' ' -f1)
+elif command -v shasum >/dev/null 2>&1; then
+  EXPECTED_HASH=$(printf '%s' "$LONG_SID" | shasum -a 1 | cut -d' ' -f1)
+else
+  EXPECTED_HASH=""
+fi
+if [[ -n "$EXPECTED_HASH" ]]; then
+  assert_true "fallback: oversized sid -> sha1 hash flag created" '[[ -e "$CACHE/compact-warned-$EXPECTED_HASH" ]]'
+else
+  # Harness is running on a box with neither sha1sum nor shasum — assert the
+  # tr-truncation path produced *some* flag under the cache dir.
+  FLAGS=$(find "$CACHE" -name 'compact-warned-*' 2>/dev/null | wc -l | tr -d ' ')
+  assert_true "fallback: oversized sid -> truncation flag created (no sha1/shasum)" '[[ "$FLAGS" -gt 0 ]]'
+fi
+
+# --- 19: pure-bash fallback extraction — unit tests of the grep+sed pipeline.
+# Split into two focused assertions to avoid JSON-escaping-inside-shell-quoting
+# contortions. Covers: (a) sed un-escape of JSON '\\' -> '\' (used on Windows
+# transcript_paths), and (b) grep -oE first-match behavior (so a prompt field
+# with an embedded "session_id":"..." substring doesn't spoof the real one).
+INPUT_19A='C:\\Users\\koen\\big.jsonl'
+OUTPUT_19A=$(printf '%s' "$INPUT_19A" | sed 's|\\\\|\\|g')
+assert_eq "fallback: sed un-escapes JSON backslash-backslash to single backslash" 'C:\Users\koen\big.jsonl' "$OUTPUT_19A"
+INPUT_19B='"session_id":"real","dummy":"y","session_id":"fake"'
+OUTPUT_19B=$(printf '%s' "$INPUT_19B" | grep -oE '"session_id":"[^"]*"' | head -n 1 | sed 's/^"session_id":"//;s/"$//')
+assert_eq "fallback: grep -oE + head -n 1 picks first session_id" "real" "$OUTPUT_19B"
 
 # --- 13: cache-dir mkdir failure logs stderr (force by pointing HOME at a non-creatable path)
 cleanup
@@ -203,8 +249,63 @@ assert_true "RESET cleared flag" '[[ ! -e "$CACHE/compact-warned-s16" ]]'
 OUT2=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook '{"session_id":"s16","transcript_path":"'"$FIX/big.jsonl"'"}')
 assert_true "second crossing after RESET emits fresh reminder" '[[ "$OUT2" == *"prep-compact"* ]]'
 
+# --- 20: Option A delta-tracking — PostCompact with transcript_path writes
+# baseline; UPS with bytes == baseline (delta 0) stays silent; bytes > baseline
+# + threshold fires a NEW reminder. Regression guard for the append-only
+# transcript problem where absolute-threshold would nag every turn post-compact.
 cleanup
-rm -f "$FIX/transcript-"*.jsonl "$FIX/real-standin.jsonl"
+make_random_file "$FIX/growing.jsonl" 2500
+# PostCompact records baseline = 2500
+printf '%s' "{\"session_id\":\"s20\",\"transcript_path\":\"$FIX/growing.jsonl\"}" \
+  | HOME="$SANDBOX_HOME" bash "$HOOK" RESET 2>/dev/null
+assert_true "RESET writes baseline file" '[[ -e "$CACHE/compact-baseline-s20" ]]'
+SAVED_BASELINE=$(cat "$CACHE/compact-baseline-s20" 2>/dev/null | tr -d '[:space:]')
+assert_eq "baseline content matches transcript bytes at RESET" "2500" "$SAVED_BASELINE"
+# UPS with unchanged transcript: delta=0, below threshold, silent
+OUT=$(printf '%s' "{\"session_id\":\"s20\",\"transcript_path\":\"$FIX/growing.jsonl\"}" \
+  | CLAUDE_CONTEXT_WARN_BYTES=1000 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null)
+assert_eq "post-RESET, bytes==baseline (delta 0) -> silent" "" "$OUT"
+# Grow transcript to baseline + 1500 (delta 1500, above threshold 1000): fire
+head -c 4000 </dev/urandom >"$FIX/growing.jsonl"
+OUT=$(printf '%s' "{\"session_id\":\"s20\",\"transcript_path\":\"$FIX/growing.jsonl\"}" \
+  | CLAUDE_CONTEXT_WARN_BYTES=1000 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null)
+assert_true "post-RESET, delta above threshold -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
+assert_true "post-RESET reminder mentions delta vs baseline" '[[ "$OUT" == *"since last compact"* ]]'
+
+# --- 21: pathless RESET with pre-existing baseline preserves the baseline and
+# clears the flag. Documents the v0.2.0 behavior where a PostCompact event
+# without transcript_path in stdin cannot refresh the baseline — known
+# limitation, but at least the flag-clear path still runs so the next above-
+# delta-threshold crossing will fire correctly (relative to old baseline).
+cleanup
+printf '%s\n' 2500 >"$CACHE/compact-baseline-s21"
+touch "$CACHE/compact-warned-s21"
+printf '%s' '{"session_id":"s21"}' | HOME="$SANDBOX_HOME" bash "$HOOK" RESET 2>/dev/null
+assert_true "pathless RESET clears warned flag" '[[ ! -e "$CACHE/compact-warned-s21" ]]'
+PRESERVED=$(cat "$CACHE/compact-baseline-s21" 2>/dev/null | tr -d '[:space:]')
+assert_eq "pathless RESET preserves existing baseline" "2500" "$PRESERVED"
+
+# --- 22: BYTES < BASELINE (unexpected but defensively handled — e.g.
+# transcript rotation). Hook treats DELTA = BYTES (falls back to absolute-
+# threshold semantics for this prompt) rather than a negative delta.
+cleanup
+make_random_file "$FIX/small-after-baseline.jsonl" 500
+printf '%s\n' 5000 >"$CACHE/compact-baseline-s22"
+# bytes=500 < baseline=5000; delta treated as 500. threshold=1000 -> below, silent.
+OUT=$(printf '%s' "{\"session_id\":\"s22\",\"transcript_path\":\"$FIX/small-after-baseline.jsonl\"}" \
+  | CLAUDE_CONTEXT_WARN_BYTES=1000 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null)
+assert_eq "bytes<baseline: delta=bytes, below threshold -> silent" "" "$OUT"
+
+# --- 23: malformed baseline file is ignored (treated as baseline=0)
+cleanup
+printf 'not-a-number\n' >"$CACHE/compact-baseline-s23"
+make_random_file "$FIX/big.jsonl" 2000
+OUT=$(printf '%s' "{\"session_id\":\"s23\",\"transcript_path\":\"$FIX/big.jsonl\"}" \
+  | CLAUDE_CONTEXT_WARN_BYTES=1000 HOME="$SANDBOX_HOME" bash "$HOOK" 2>/dev/null)
+assert_true "malformed baseline -> ignored, absolute-threshold fires" '[[ "$OUT" == *"prep-compact"* ]]'
+
+cleanup
+rm -f "$FIX/transcript-"*.jsonl "$FIX/real-standin.jsonl" "$FIX/growing.jsonl" "$FIX/small-after-baseline.jsonl" "$CACHE"/compact-baseline-* 2>/dev/null
 
 printf '\n'
 if [[ "$FAIL" -eq 0 && "$PASS" -eq "$EXPECTED_PASS" ]]; then
