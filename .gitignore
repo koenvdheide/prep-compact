@@ -1,0 +1,19 @@
+# Test harness sandbox output (harness uses mktemp, but in case of fallback)
+/tmp/prep-compact-test*
+prep-compact-test-*
+
+# macOS metadata
+.DS_Store
+
+# Editor junk
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# OS
+Thumbs.db
+
+# Marketplace submission draft — local notes, not part of distribution
+MARKETPLACE_SUBMISSION.md

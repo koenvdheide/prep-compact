@@ -1,0 +1,6 @@
+# Enforce LF line endings for shell scripts and JSON so CI on Linux works
+# regardless of the contributor's platform.
+*.sh      text eol=lf
+*.json    text eol=lf
+*.md      text
+*.yml     text eol=lf

@@ -1,0 +1,34 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure Python 3 is on PATH
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Show environment
+        run: |
+          bash --version
+          python --version || python3 --version
+          uname -a || systeminfo | head -10
+
+      - name: Run test harness
+        run: bash test/run-tests.sh
