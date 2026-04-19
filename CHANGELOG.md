@@ -4,6 +4,32 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-19
+
+Behavior change: the reminder is now two-stage. The soft nudge is **informational only** (no longer auto-invokes the skill), and a new critical level auto-invokes near the context wall. Solves the "skill auto-invoked, then user worked for a bit, now the draft is stale" failure mode in v0.2.x.
+
+### Changed (breaking for users who relied on v0.2.x auto-invoke-on-single-threshold)
+
+- **Two-stage reminder cadence.** `CLAUDE_CONTEXT_WARN_BYTES` (default `4000000` ≈ 450K tokens on Opus 4.7) now emits a *soft* informational reminder that explicitly tells Claude **not** to invoke the skill proactively. The new `CLAUDE_CONTEXT_CRITICAL_BYTES` (default `6000000` ≈ 670K tokens, ~330K headroom before likely auto-compact) emits a *critical* reminder that tells Claude to invoke the skill immediately (best-effort prompt-layer steering; the SKILL.md self-gate treats a `level=critical` reminder as a legitimate auto-invoke trigger). Users who want the v0.2.x zero-turn behavior can set `CLAUDE_CONTEXT_CRITICAL_BYTES=CLAUDE_CONTEXT_WARN_BYTES+1` — but since `CRITICAL` must exceed `WARN`, the effective minimum is `WARN+1`.
+- **Canonical marker prefix.** Reminders now start with `[prep-compact level=soft]` or `[prep-compact level=critical]`. The skill gates on that marker (plus explicit user requests) instead of fuzzy prose classification. Drops the `prep compact` natural-language phrase from the soft reminder body to lower auto-routing pressure; users still invoke via natural language, the reminder just doesn't echo it.
+- **Soft reminder is honest about what it is.** "Informational only. Do not call any skill or tool from this reminder... Do not treat this reminder as the user's request." Closes the "user submitted a prompt this turn, so that counts as asking" loophole.
+- **Critical reminder wording softened.** "Context is critically high; compact soon to avoid likely degradation" replaces v0.2.x "Invoke the prep-compact skill now to generate..." / drafts of "auto-compact imminent". The "imminent" framing overclaimed — we measure bytes/token, not auto-compact onset. Urgency preserved; accuracy improved.
+- **Single per-session state file** (`${CACHE_DIR}/compact-level-<safe_session_id>`) replaces the v0.2.x `compact-warned-<sid>` flag. Stores the currently synced level (`soft` | `critical` | absent=none) — i.e. the level matching the current delta, not just the last level that produced an emission. The hook emits only on upgrade (none→soft, soft→critical, none→critical); downgrades (e.g. after the user raises `CLAUDE_CONTEXT_CRITICAL_BYTES`) rewrite the state file silently so the next genuine upgrade fires cleanly. Fixes the stale-hard regression mode where a user who raised `CLAUDE_CONTEXT_CRITICAL_BYTES` mid-session after a critical reminder would never see it again.
+- **Invalid-config handling:** if `CLAUDE_CONTEXT_CRITICAL_BYTES <= CLAUDE_CONTEXT_WARN_BYTES`, the hook logs a terse stderr warning and disables critical for that turn (soft can still fire). Refuses to silently swap the two (which would mask the config error and produce confusing state transitions).
+
+### Added
+
+- **SKILL.md body self-gate.** Opening section checks in order: user veto (stop, "prep compact" later), explicit user ask or `[prep-compact level=critical]` reminder (proceed), `[prep-compact level=soft]` only and no user ask (stop, tell user to say "prep compact" when ready), no trigger at all (stop). Explicit precedence: user veto > explicit user ask > critical auto-trigger. Positive/negative trigger examples list what counts as each.
+- **SKILL.md description updated** to mention the `[prep-compact level=critical]` path and the "do not auto-invoke on soft reminder" rule.
+- **Tests 27, 28, 29** cover: critical emission carries the `level=critical` marker + writes the expected state file, stale-critical re-arm after `CLAUDE_CONTEXT_CRITICAL_BYTES` is raised mid-session, and invalid-ordering (`CRITICAL <= WARN`, both `<` and `==`) fail-open behavior. Test 2 and test 27 gain body-copy regression assertions ("Informational only", "Do not treat this reminder as the user's request" for soft; "critically high", "Invoke the prep-compact skill" for critical) so silent rewording can't weaken either reminder. Test 24 extended to cover invalid `CLAUDE_CONTEXT_CRITICAL_BYTES`. Test 21 repurposed to prove the pathless RESET clears the level file regardless of prior value (soft or critical).
+- **README "Migration from 0.2.x" section** for users with the standalone `~/.claude/hooks/check-context-size.sh` install — their existing setup keeps working at v0.2.x behavior; to pick up v0.3.0 they clear the standalone settings.json entries and load the plugin via `--plugin-dir` (or wait for marketplace install to become available).
+
+### Rationale
+
+Two Codex red-team rounds shaped this release:
+- **Round 1** flagged that a single informational nudge regresses the emergency case (user close to context wall can't afford the extra round-trip of "user asks → skill runs → user runs /compact"). Two-stage preserves pure info-only default while keeping a zero-turn auto-invoke path for genuine emergencies.
+- **Round 2** flagged that prose-only gating ("Do NOT invoke the skill proactively") is best-effort prompt steering, not enforcement; that two independent flags cascade-clear wrong on threshold-raise; and that the `auto-compact imminent` phrasing overclaims the calibration. Fixes: canonical marker + SKILL self-gate (machine-readable anchor), single `last_emitted_level` state (correct by construction), softer wording.
+
 ## [0.2.1] - 2026-04-19
 
 Security + correctness hardening discovered in a post-v0.2.0 release review. No new features; no breaking changes to shipped behavior.

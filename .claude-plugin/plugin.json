@@ -1,7 +1,7 @@
 {
   "name": "prep-compact",
-  "description": "Nudges Claude Code to prepare tailored /compact instructions when the session transcript passes a configurable byte threshold. One-shot UserPromptSubmit reminder + PostCompact auto-reset + a skill that emits a 5-field mini-schema /compact block covering goal/next/files/decisions/state.",
-  "version": "0.2.1",
+  "description": "Two-stage Claude Code reminder: a soft informational nudge when the transcript passes a warn threshold (context filling, perf may degrade), and a critical reminder near the context wall that tells Claude to auto-invoke the skill. Skill surveys current state and outputs a tailored 5-field /compact mini-schema (goal/next/files/decisions/state) so the post-compact session resumes correctly.",
+  "version": "0.3.0",
   "author": {
     "name": "Koen van der Heide",
     "url": "https://github.com/koenvdheide"
