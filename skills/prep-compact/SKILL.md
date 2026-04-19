@@ -1,11 +1,43 @@
 ---
 name: prep-compact
-description: Use when preparing to compact the conversation due to context size (typically triggered by the hook-emitted context-size reminder, or when the user asks to "prep compact" / "prepare compaction instructions", or when the user manually invokes /prep-compact to refresh compaction instructions before running /compact). Surveys current state and outputs a tailored /compact <instructions> command that preserves what's needed to continue work correctly post-compact.
+description: Use when the user explicitly asks to prepare compaction ("prep compact" / "prepare compaction instructions" / "refresh the compact block" / invokes /prep-compact:prep-compact) OR when a `[prep-compact level=critical]` system-reminder appears this turn. Surveys current state and outputs a tailored /compact <instructions> command that preserves what's needed to continue work correctly post-compact. Do NOT auto-invoke on a `[prep-compact level=soft]` reminder — that reminder is informational only; wait for the user.
 ---
 
 # Prep-Compact
 
-When invoked, survey the current state and produce a tailored `/compact <instructions>` command the user can copy and run. Users often invoke `/prep-compact` manually to get a refreshed snapshot — expect repeat invocations and produce a fresh output every time.
+When legitimately invoked, survey the current state and produce a tailored `/compact <instructions>` command the user can copy and run. Users often re-invoke manually to refresh the snapshot right before compacting — expect repeat invocations and produce a fresh output every time.
+
+## 0. Self-gate — verify legitimate invocation before surveying
+
+Before drafting anything, confirm the invocation is legitimate. Check in order:
+
+1. **User veto or discussion?** Did the user this turn say something like "don't prep compact yet", "not yet", "wait", "not now", or ask to *discuss* the reminder / whether to compact rather than *do it*? If so, **STOP**. Do not draft `/compact` instructions. Acknowledge their intent and wait.
+
+2. **Legitimate trigger present?** Proceed only if at least one of:
+   - **(a)** User explicitly asked this turn (positive triggers below).
+   - **(b)** A `[prep-compact level=critical]` system-reminder appears this turn.
+
+3. **Only a soft reminder and no user ask?** If the visible reminder is `[prep-compact level=soft]` (or any variant that is not `level=critical`) and the user did not explicitly ask, **STOP**. Respond:
+   > Context is high. Say `prep compact` when you're ready and I'll generate fresh `/compact` instructions.
+
+4. **No trigger at all?** **STOP**. Tell the user they can invoke via `prep compact` or `/prep-compact:prep-compact`.
+
+Precedence when signals conflict: **user veto > explicit user ask > critical auto-trigger**. If a user veto and a critical reminder both appear in the same turn, the veto wins.
+
+### Positive triggers (proceed)
+
+- "prep compact" / "prepare compact" / "prepare compaction instructions"
+- "refresh the compact block" / "redraft compact" / "update the compact block"
+- User runs `/prep-compact:prep-compact`
+- `[prep-compact level=critical]` reminder visible this turn
+
+### Negative triggers (stop)
+
+- `[prep-compact level=soft]` reminder visible, no user ask
+- User quotes the reminder without asking to act on it
+- User asks what the reminder means or whether compacting is needed
+- "not yet" / "wait" / "don't prep compact yet" / "not now"
+- User asks to configure thresholds, disable the hook, or discuss behavior
 
 ## 1. Survey the current session in 4 buckets
 
@@ -13,8 +45,8 @@ Only claim what is actually observable from the current session. Omit rather tha
 
 - **Goal + next step** — one sentence each.
   - **Goal:** what the user is trying to accomplish right now.
-  - **Next step:** the immediate next action that was about to happen. This must be *executable*, not thematic. Use a verb anchor: `edit <path>[:<symbol>]`, `run <command>`, `inspect <file> for <issue>`, `ask user <question>`, `wait for agent <id>`. If the session is genuinely uncertain what to do next, that uncertainty belongs in `decisions.blockers`, and `next` should name the blocker that must be resolved before work resumes.
-- **Source-of-truth docs/files** — paths to the active plan/spec file (any location — `~/.claude-local/superpowers/specs/`, `~/.claude-local/superpowers/plans/`, elsewhere) and the key source files needed to execute the `next` action. Paths only, not content; the post-compact session re-reads. Order: spec/plan first, then code files in order of relevance to `next`.
+  - **Next step:** the immediate next action that was about to happen. Must be *executable*, not thematic. Use a verb anchor: `edit <path>[:<symbol>]`, `run <command>`, `inspect <file> for <issue>`, `ask user <question>`, `wait for agent <id>`. If the session is genuinely uncertain what to do next, that uncertainty belongs in `decisions.blockers`, and `next` should name the blocker that must be resolved before work resumes.
+- **Source-of-truth docs/files** — paths to the active plan/spec file and the key source files needed to execute `next`. Paths only, not content; the post-compact session re-reads. Order: spec/plan first, then code files in order of relevance to `next`.
 - **Decisions + constraints + blockers** — decisions already made with their rationale; outstanding constraints (hard requirements, anti-patterns the user has stated); blockers (unresolved review/QA findings, failing tests, pending user answers).
 - **Execution state** — uncommitted changes, test status if known, mid-implementation markers, running background agents.
 
@@ -38,7 +70,7 @@ goal: ... | next: ... | files: ... | decisions: decided=...; constraints=...; bl
 
 **Compression:** follow CLAUDE.md Caveman rules (LLM-to-LLM). Preserve verbatim: paths, identifiers, decisions, constraints, blockers, agent-IDs. Keep the full `/compact ...` command within whatever length bound was observed in the Phase 0 spike — if it would exceed, reference the plan/spec file path and omit redundant file enumerations rather than inlining everything.
 
-## 3. Self-check — round-trip loss audit (stronger than a scan)
+## 3. Self-check — round-trip loss audit
 
 Before presenting: draft the `/compact` block, then privately reconstruct the 4-bucket survey from *just that block*, as if you were a fresh post-compact session with nothing else to go on. Ask:
 
@@ -49,7 +81,7 @@ Before presenting: draft the `/compact` block, then privately reconstruct the 4-
 - Is every blocker that would *prevent* `next` in `decisions.blockers`?
 - Does `state` tell you whether you're mid-edit, what the test status is, and whether any agent is running you need to wait for/ignore/close?
 
-If any answer is "not quite" or "I'd have to guess", the block is incomplete — revise before presenting. This is the same model checking its own output, so it's a weak gate, but testing *recoverability* from the output is a sharper check than scanning whether fields are populated.
+If any answer is "not quite" or "I'd have to guess", the block is incomplete — revise before presenting.
 
 ## 4. Present to the user
 
