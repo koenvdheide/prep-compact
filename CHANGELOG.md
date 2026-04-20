@@ -4,6 +4,18 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-04-20
+
+First stable release for marketplace submission. No functional changes from v0.5.1 — the bump signals API commitment, not new behavior.
+
+### Added
+
+- `PRIVACY.md` — documents that the plugin is local-only (no network, no telemetry, no session-content persistence), what the two cache files hold, and how transcript access is scoped (stat-only, not read).
+
+### Rationale
+
+v0.5.x numbering was an artifact of the design-iteration cycles (v0.3.0 two-stage → v0.4.0 info-only → v0.5.0 minimal rebuild per Codex scope analysis → v0.5.1 no-Python stderr warn). The feature is done per that analysis, CI is green, and the public surface area is small and stable: one env var (`CLAUDE_CONTEXT_WARN_BYTES`), two hook events (`UserPromptSubmit` + `PostCompact`), one skill namespace (`prep-compact`), one cache-file schema (`compact-warned-<sid>`, `compact-baseline-<sid>`). Future breaking changes will bump to 2.0.0.
+
 ## [0.5.1] - 2026-04-20
 
 ### Fixed
