@@ -24,6 +24,17 @@ FAIL=0
 PASS=0
 EXPECTED_PASS=43
 
+# Harness Python resolution: mirror the hook. Prefer python3; fall back to
+# python only if it is Python 3. Fail fast if neither is available.
+if command -v python3 >/dev/null 2>&1; then
+  PY=python3
+elif command -v python >/dev/null 2>&1 && python -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' 2>/dev/null; then
+  PY=python
+else
+  printf 'run-tests: Python 3 not found on PATH (tried python3 and python).\n' >&2
+  exit 1
+fi
+
 make_random_file() { head -c "$2" </dev/urandom >"$1"; }
 
 run_hook() {
@@ -106,7 +117,7 @@ cleanup
 LONG=$(printf 'a%.0s' {1..200})
 OUT=$(CLAUDE_CONTEXT_WARN_BYTES=1000 run_hook "{\"session_id\":\"$LONG\",\"transcript_path\":\"$FIX/big.jsonl\"}" 2>/dev/null)
 assert_true "oversized sid -> not used raw" '[[ ! -e "$CACHE/compact-warned-$LONG" ]]'
-SHA1=$(python -c "import hashlib; print(hashlib.sha1(b'$LONG').hexdigest())")
+SHA1=$("$PY" -c "import hashlib; print(hashlib.sha1(b'$LONG').hexdigest())")
 assert_true "oversized sid -> hash flag created" '[[ -e "$CACHE/compact-warned-$SHA1" ]]'
 
 # --- 10: env var override lowers threshold
@@ -121,10 +132,10 @@ assert_true "env override (threshold 1000, 1500b) -> reminder" '[[ "$OUT" == *"p
 # --- 11: real Task 0 payload parity
 cleanup
 if [[ -s "$FIX/ups-real.json" ]]; then
-  REAL_TP=$(python -c "import json,sys; print(json.load(sys.stdin).get('transcript_path',''))" <"$FIX/ups-real.json")
+  REAL_TP=$("$PY" -c "import json,sys; print(json.load(sys.stdin).get('transcript_path',''))" <"$FIX/ups-real.json")
   if [[ -z "$REAL_TP" || ! -r "$REAL_TP" ]]; then
     cp "$FIX/big.jsonl" "$FIX/real-standin.jsonl"
-    REAL_JSON=$(python -c "import json,sys; d=json.load(sys.stdin); d['transcript_path']='$FIX/real-standin.jsonl'; print(json.dumps(d, separators=(',', ':')))" <"$FIX/ups-real.json")
+    REAL_JSON=$("$PY" -c "import json,sys; d=json.load(sys.stdin); d['transcript_path']='$FIX/real-standin.jsonl'; print(json.dumps(d, separators=(',', ':')))" <"$FIX/ups-real.json")
   else
     REAL_JSON=$(cat "$FIX/ups-real.json")
   fi

@@ -116,10 +116,18 @@ fi
 
 : >"$FLAG"
 
-if (( BASELINE > 0 )); then
-  printf 'Session transcript is approximately %s bytes, delta %s bytes since last compact (above the configured threshold of %s bytes, ~450K tokens on Opus 4.7). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user.\n' "$BYTES" "$DELTA" "$THRESHOLD"
+# The "~450K tokens on Opus 4.7" calibration is only accurate for the 4 MB
+# default threshold. Drop it when the user has overridden the threshold.
+if (( THRESHOLD == 4000000 )); then
+  CALIBRATION=', ~450K tokens on Opus 4.7'
 else
-  printf 'Session transcript is approximately %s bytes (above the configured threshold of %s bytes, ~450K tokens on Opus 4.7). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user.\n' "$BYTES" "$THRESHOLD"
+  CALIBRATION=''
+fi
+
+if (( BASELINE > 0 )); then
+  printf 'Session transcript is approximately %s bytes, delta %s bytes since last compact (above the configured threshold of %s bytes%s). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user.\n' "$BYTES" "$DELTA" "$THRESHOLD" "$CALIBRATION"
+else
+  printf 'Session transcript is approximately %s bytes (above the configured threshold of %s bytes%s). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user.\n' "$BYTES" "$THRESHOLD" "$CALIBRATION"
 fi
 
 exit 0
