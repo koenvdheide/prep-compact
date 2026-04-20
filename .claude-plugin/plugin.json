@@ -1,7 +1,7 @@
 {
   "name": "prep-compact",
   "description": "When your Claude Code session transcript passes a configurable byte threshold (default 4 MB \u2248 450K tokens on Opus 4.7), a hook tells Claude to invoke the prep-compact skill. The skill surveys current state and emits a tailored /compact <instructions> mini-schema (goal/next/files/decisions/state) so the post-compact session resumes correctly.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": {
     "name": "Koen van der Heide",
     "url": "https://github.com/koenvdheide"

@@ -4,6 +4,20 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-04-20
+
+README polish after marketplace-submission QA. No functional changes.
+
+### Changed
+
+- Dropped the `grep`, `head`, `cut` entries from the Requirements bash-utils list. The runtime hook uses only `mkdir`, `cat`, `sed`, `tr`, `wc`, `rm` (verified against `hooks/check-context-size.sh`); `grep` was removed in v0.5.0 and `head`/`cut` were never runtime deps. The whole bash-utils bullet is now gone — anyone running Claude Code already has these.
+- Softened the Claude Code minimum-version claim. The old line pinned `v2.1.105` without a source; primary docs don't pin a floor (the public changelog excerpt at code.claude.com only covers v2.1.73 onward, and the plugins docs just say "update Claude Code to the latest version"). Line now reads "Claude Code with plugin support. If `/plugin` is unknown, update Claude Code."
+- Security section now points to `PRIVACY.md` (added in v1.0.0) for the full statement.
+
+### Fixed
+
+- Blank line between the README title and the first heading (MD022).
+
 ## [1.0.0] - 2026-04-20
 
 First stable release for marketplace submission. No functional changes from v0.5.1 — the bump signals API commitment, not new behavior.
