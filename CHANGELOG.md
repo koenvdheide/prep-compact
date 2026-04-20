@@ -4,6 +4,70 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-20
+
+Minimal rebuild. v0.3.0 (two-stage) and v0.4.0 (single info-only) layered on complexity that a Codex scope analysis (2026-04-20) showed was mostly ceremony: the plugin had grown ~10× beyond the original one-paragraph ask. v0.5.0 goes back to a single auto-invoke reminder at the threshold — faithful to the original intent, with only the pieces that production use actually forced.
+
+### Changed (breaking from v0.4.0)
+
+- **Reminder auto-invokes again.** Reverts v0.3.0/v0.4.0 "do not auto-invoke" / info-only framing. The reminder tells Claude to invoke the `prep-compact` skill directly. Trade-off: if you keep working after the reminder fires, the drafted `/compact` block will be stale by compact-time — the fix is to manually invoke `/prep-compact:prep-compact` right before running `/compact`.
+- **SKILL body self-gate removed.** v0.3.0's opening section with user-veto / explicit-ask / critical-reminder precedence is gone. Simple invocation: if triggered, produce the mini-schema.
+- **Python 3 required** (no pure-bash fallback). v0.2.0's `grep`/`sed` extraction was productization cost not warranted for this audience. Python 3 is universal on Linux/macOS and standard on Windows Git Bash.
+- **Symlink-poisoning defenses removed.** The `-L` checks on flag + baseline writes are gone. Trivial attack surface — if a hostile process has write access to `${CLAUDE_PLUGIN_DATA}` it can do far worse than symlink a cache file.
+- **Round-trip loss audit removed** from SKILL.md. Quality polish, not core necessity.
+- **Migration note removed** from README.
+
+### Kept (production-forced, load-bearing)
+
+- Delta-since-last-compact tracking — the append-only `.jsonl` makes absolute-threshold wrong after the first compact.
+- Threshold validation (regex `^(0|[1-9][0-9]*)$`) — bash arithmetic on a non-numeric env var under `set -u` crashes the hook; validation keeps fail-open.
+- Session_id safety (regex + SHA-1 hex fallback).
+- Fail-open on every error path; hook always exits 0.
+- 4-bucket skill survey + mini-schema with labeled subslots + verb-anchored `next`.
+
+### Test + CI changes
+
+- Removed tests 17, 18, 19 (pure-bash fallback path — no longer exists).
+- Removed tests 25, 26 (symlink defense — no longer exists).
+- Removed body-copy regression assertions from test 2 (reminder copy reverted to auto-invoke).
+- 43 assertions on both Linux and Windows Git Bash, single lane (python-preferred only). Down from v0.4.0's 56 / 51 across two lanes.
+- CI workflow dropped the `PREP_COMPACT_DISABLE_PYTHON=1` lane.
+
+### Rationale
+
+Codex scope analysis (2026-04-20) honest verdict: v0.4.0 was "lean enough for publishable plugin, but still over-engineered relative to the original one-paragraph ask." Production-forced complexity (delta tracking, threshold validation, session_id safety, fail-open) was load-bearing; review-driven complexity (two-stage, canonical markers, info-only wording, self-gate, Python-optional, symlink defenses) was ceremony — "expensive and mostly temporary." v0.5.0 keeps the first category, removes the second.
+
+## [0.4.0] - 2026-04-19
+
+Design reversal: v0.3.0's two-stage split proved more machinery than benefit. v0.4.0 goes back to a single informational reminder at `CLAUDE_CONTEXT_WARN_BYTES`, keeping v0.3.0's info-only wording and SKILL self-gate but dropping the critical auto-invoke path.
+
+### Changed (breaking for users who set CLAUDE_CONTEXT_CRITICAL_BYTES in v0.3.0)
+
+- **Removed `CLAUDE_CONTEXT_CRITICAL_BYTES` env var and the critical auto-invoke path.** Single reminder at `CLAUDE_CONTEXT_WARN_BYTES` is all that fires. v0.3.0 was ~24 hours old; unlikely to have gained users with custom critical thresholds, but anyone who set that env var should remove it (the hook now ignores it).
+- **Removed the `[prep-compact level=soft|critical]` canonical marker.** With one level, the marker added no value over the SKILL description's "do not auto-invoke on the reminder" rule.
+- **Reverted state file to the v0.2.x `compact-warned-<sid>` flag** (empty presence marker). The v0.3.0 `compact-level-<sid>` file stored "soft" or "critical" — unnecessary now that there's only one level. Users upgrading from v0.3.0 may see a stale `compact-level-<sid>` file in `${CLAUDE_PLUGIN_DATA}` or `~/.claude/cache`; it's harmless and can be deleted manually.
+
+### Kept from v0.3.0
+
+- **Info-only reminder wording** ("Informational only. Do not call any skill or tool from this reminder... Do not treat this reminder as the user's request"). This was the core v0.3.0 fix — the user picks the moment to compact so the draft is fresh.
+- **SKILL body self-gate** — user veto > explicit user ask. The "proceed on `[prep-compact level=critical]` marker" branch is gone; positive triggers are now exclusively explicit user requests.
+- **Body-copy regression assertions** in test 2 ("Informational only", "Do not treat this reminder as the user's request") so silent rewording can't weaken the gate.
+- **Symlink-defense fall-through** from v0.3.0 — a race on the flag file falls through to emit rather than silent-exit, so an attacker can't use a planted symlink as a "silence the warning" payoff.
+
+### Added
+
+- `compact-level-<sid>` → `compact-warned-<sid>` documentation migration note for v0.3.0 users.
+
+### Test changes
+
+- Stripped tests 27, 28, 29 (two-stage scenarios) and the `CLAUDE_CONTEXT_CRITICAL_BYTES` extension of test 24.
+- Stripped critical-body copy assertions from test 27 (test removed).
+- 56 assertions Linux / 51 Windows (down from 72 / 68 in v0.3.0) across python-preferred and pure-bash fallback lanes. Test 25 now additionally asserts the fall-through emit behavior (reminder fires after a symlink attack rather than silently suppressing).
+
+### Rationale
+
+v0.3.0's two-stage was added in response to Codex r1's concern that manual-only flow regresses the emergency case (user near the context wall can't afford an extra round-trip). That concern is real but turned out to be outweighed by the complexity cost: two thresholds, two reminder templates, a state machine with upgrade/downgrade/same-level semantics, marker prefixes, invalid-config handling. For a plugin whose job is "nudge the user at the right moment", a single honest info-only nudge is cleaner — and if the user ignores it and hits the wall, Claude Code's built-in auto-compact still runs (just with the default summary, which is the baseline this plugin already improves on). Simpler design, same core value.
+
 ## [0.3.0] - 2026-04-19
 
 Behavior change: the reminder is now two-stage. The soft nudge is **informational only** (no longer auto-invokes the skill), and a new critical level auto-invokes near the context wall. Solves the "skill auto-invoked, then user worked for a bit, now the draft is stale" failure mode in v0.2.x.

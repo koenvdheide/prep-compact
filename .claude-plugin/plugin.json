@@ -1,7 +1,7 @@
 {
   "name": "prep-compact",
-  "description": "Two-stage Claude Code reminder: a soft informational nudge when the transcript passes a warn threshold (context filling, perf may degrade), and a critical reminder near the context wall that tells Claude to auto-invoke the skill. Skill surveys current state and outputs a tailored 5-field /compact mini-schema (goal/next/files/decisions/state) so the post-compact session resumes correctly.",
-  "version": "0.3.0",
+  "description": "When your Claude Code session transcript passes a configurable byte threshold (default 4 MB \u2248 450K tokens on Opus 4.7), a hook tells Claude to invoke the prep-compact skill. The skill surveys current state and emits a tailored /compact <instructions> mini-schema (goal/next/files/decisions/state) so the post-compact session resumes correctly.",
+  "version": "0.5.0",
   "author": {
     "name": "Koen van der Heide",
     "url": "https://github.com/koenvdheide"
