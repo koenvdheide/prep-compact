@@ -4,6 +4,12 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-04-20
+
+### Fixed
+
+- **No-Python branch now logs to stderr before fail-open.** v0.5.0 exited silently if `python3` / `python` were absent, making the plugin appear broken on systems without Python. Now the hook prints `check-context-size: Python 3 not found on PATH; hook disabled this turn.` to stderr before the `exit 0`. Fail-open discipline preserved (still exits 0); user gets a clear signal instead of silent no-op. Caught by a README-QA pass.
+
 ## [0.5.0] - 2026-04-20
 
 Minimal rebuild. v0.3.0 (two-stage) and v0.4.0 (single info-only) layered on complexity that a Codex scope analysis (2026-04-20) showed was mostly ceremony: the plugin had grown ~10× beyond the original one-paragraph ask. v0.5.0 goes back to a single auto-invoke reminder at the threshold — faithful to the original intent, with only the pieces that production use actually forced.
