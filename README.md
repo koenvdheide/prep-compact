@@ -1,14 +1,15 @@
 # prep-compact
+## Why
+
+Claude Code's auto-compact runs late. Context is usually already degrading by the time it fires, and the default summary generated for compaction is pretty iffy, it often doesn't save which files, decisions, or blockers you wanted preserved. Running `/compact <instructions>` with a tailored prompt gives dramatically cleaner resumption, but requires you to remember to do it and design the prompt. This plugin nags you at the right moment and drafts the tailored prompt for you.
+
+## How It Works
 
 A Claude Code plugin that nudges Claude to prepare tailored `/compact` instructions when the context window is getting full enough that performance has started dropping. Experience suggests this happens around the halfway point of the 1M-token window on Opus.
 
 When your session transcript delta since last compact crosses `CLAUDE_CONTEXT_WARN_BYTES` (default `4000000` ≈ 450K tokens on Opus 4.7), a `UserPromptSubmit` hook emits a one-shot reminder telling Claude to invoke the `prep-compact` skill. The skill surveys the session in four buckets — goal+next, source-of-truth files, decisions+constraints+blockers, execution state — and emits a copy-paste `/compact <mini-schema>` block preserving what the post-compact session needs to resume correctly.
 
 The reminder fires once per delta-crossing interval. `PostCompact` records the current transcript size as a baseline, and future reminders fire only when the session has grown `CLAUDE_CONTEXT_WARN_BYTES` more bytes since that baseline — not on absolute transcript size (the transcript `.jsonl` is append-only on disk; an absolute check would fire every turn after the first compact). You can also invoke `/prep-compact:prep-compact` manually at any time to refresh the draft right before running `/compact`.
-
-## Why
-
-Claude Code's auto-compact runs late. Context is usually already degrading by the time it fires, and the default summary is kinda bad — it doesn't know which files, decisions, or blockers you wanted preserved. Running `/compact <instructions>` with a tailored prompt gives dramatically cleaner resumption, but requires you to remember to do it and design the prompt. This plugin nags you at the right moment and drafts the tailored prompt for you.
 
 ## Install
 
