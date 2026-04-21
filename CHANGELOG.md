@@ -4,6 +4,35 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-04-20
+
+Token-only rewrite. The hook now reads real token counts from the transcript `.jsonl`'s `.message.usage` metadata instead of approximating with transcript byte size. Two Codex red-team rounds + a spec-reviewer pass converged on: the byte-fallback's rescue value under realistic failure modes (pre-first-turn, schema drift, tail-cap miss, parse errors) is negligible — silent no-op is the correct behavior in those cases, not an inaccurate byte-proxy reminder. Breaking change, hence the major bump.
+
+### Breaking
+
+- **Removed `CLAUDE_CONTEXT_WARN_BYTES` env var, byte-path code, byte baseline file, and byte-path reminder text.** The hook no longer reads `CLAUDE_CONTEXT_WARN_BYTES` from the environment — no silent-ignore warning, no deprecation shim. Migrate by setting `CLAUDE_CONTEXT_WARN_TOKENS` (default 450000); rough conversion from your old byte threshold is `BYTES / 9 ≈ TOKENS` (example: `4000000 → 450000`).
+- **Removed the `PostCompact` hook entry and handler.** The natural below-threshold branch in `UserPromptSubmit` clears stale warned flags on the first low post-compact assistant turn. `compact-baseline-<sid>` cache files are no longer written; leftover files from v1.0.x are harmless and can be deleted from `${CLAUDE_PLUGIN_DATA}` or `~/.claude/cache`.
+
+### Added
+
+- **Real token count from `.message.usage`.** A Python tail-scan (last 256 KB of the transcript) parses the newest main-chain (`role=='assistant'`, non-sidechain, non-api-error) assistant turn's `.message.usage` and sums `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. Matches Claude Code's `/context` calculation on the currently observed schema.
+- **`CLAUDE_CONTEXT_WARN_TOKENS` env var** (default `450000`) controls the threshold.
+- **`cygpath -w` bridge** in the hook so Git Bash `/tmp/` and `/c/` paths resolve correctly when the hook passes `transcript_path` to a native Windows Python. On Linux/macOS `cygpath` isn't present and the hook falls through to the raw path.
+
+### Changed
+
+- **Reminder text** now names tokens: `Session context is approximately N tokens (above configured threshold of M tokens). Invoke the prep-compact skill...`. Single variant — no byte-path or calibration suffix.
+- **Parser defensive posture**: `input_tokens` required; missing `cache_creation_input_tokens` and `cache_read_input_tokens` default to `0`. `isinstance` guards at every layer. Silent no-op on any schema drift.
+- **Test harness** rewritten around token-path semantics. 39 assertions on both Linux and Windows Git Bash. New fixtures: `test/fixtures/transcript-usage.jsonl`, `test/fixtures/transcript-malformed-tail.jsonl`.
+
+### Removed
+
+- `CLAUDE_CONTEXT_WARN_BYTES` env var handling.
+- Byte-path reminder text and its `CALIBRATION` conditional.
+- Delta-since-baseline logic and the `compact-baseline-<sid>` cache file.
+- The `PostCompact` hook entry in `hooks/hooks.json` and the corresponding `RESET` mode handling in the hook.
+- README's "Calibration on Opus 4.7" paragraph and the "byte count is a proxy" known-limit bullet.
+
 ## [1.0.1] - 2026-04-20
 
 README polish after marketplace-submission QA. No functional changes.
