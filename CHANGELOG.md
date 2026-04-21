@@ -6,7 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [2.0.0] - 2026-04-20
 
-Token-only rewrite. The hook now reads real token counts from the transcript `.jsonl`'s `.message.usage` metadata instead of approximating with transcript byte size. Two Codex red-team rounds + a spec-reviewer pass converged on: the byte-fallback's rescue value under realistic failure modes (pre-first-turn, schema drift, tail-cap miss, parse errors) is negligible — silent no-op is the correct behavior in those cases, not an inaccurate byte-proxy reminder. Breaking change, hence the major bump.
+Token-only rewrite. The hook now reads real token counts from the transcript `.jsonl`'s `.message.usage` metadata instead of approximating with transcript byte size.
+
+### Rationale
+
+Two Codex red-team rounds + a spec-reviewer pass converged on: the byte-fallback's rescue value under realistic failure modes (pre-first-turn, schema drift, tail-cap miss, parse errors) is negligible — silent no-op is the correct behavior in those cases, not an inaccurate byte-proxy reminder. Breaking change, hence the major bump.
 
 ### Breaking
 
