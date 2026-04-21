@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
-# UserPromptSubmit + PostCompact hook.
-# When session transcript delta since last compact crosses
-# CLAUDE_CONTEXT_WARN_BYTES, emit a one-shot reminder telling Claude to invoke
-# the prep-compact skill. RESET (PostCompact) records current transcript bytes
-# as the per-session baseline and clears the warned flag so the next crossing
-# re-arms. Always exits 0 (fail-open).
+# UserPromptSubmit hook for prep-compact v2.0.0.
+# Tail-scans the session transcript (last 256 KB) for the newest main-chain
+# assistant .message.usage block. When the sum of input_tokens +
+# cache_creation_input_tokens + cache_read_input_tokens exceeds
+# CLAUDE_CONTEXT_WARN_TOKENS, emits a one-shot reminder telling Claude to
+# invoke the prep-compact skill. Always exits 0 (fail-open).
+#
+# Main-chain filter: role == 'assistant', isSidechain != true,
+# isApiErrorMessage != true. input_tokens required; cache fields default to 0.
+# No byte path, no baseline, no RESET.
 
 set -uo pipefail
 
-MODE="${1:-}"
 CACHE_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/cache}"
-THRESHOLD="${CLAUDE_CONTEXT_WARN_BYTES:-4000000}"
+THRESHOLD="${CLAUDE_CONTEXT_WARN_TOKENS:-450000}"
 
 # Validate threshold: non-negative integer, no leading zeros. Bash arithmetic
 # under `set -u` on a non-numeric env var exits non-zero; `08` / `09` hit
 # "value too great for base" (octal interpretation). Either breaks fail-open.
 if ! [[ "$THRESHOLD" =~ ^(0|[1-9][0-9]*)$ ]]; then
-  printf 'check-context-size: ignoring invalid CLAUDE_CONTEXT_WARN_BYTES=%q; using 4000000.\n' "$THRESHOLD" >&2
-  THRESHOLD=4000000
+  printf 'check-context-size: ignoring invalid CLAUDE_CONTEXT_WARN_TOKENS=%q; using 450000.\n' "$THRESHOLD" >&2
+  THRESHOLD=450000
 fi
 
 if ! mkdir -p "$CACHE_DIR" 2>/dev/null; then
@@ -27,7 +30,7 @@ fi
 
 STDIN_JSON=$(cat 2>/dev/null)
 
-# Python 3 required. If absent, fail open silently.
+# Python 3 required. If absent, fail open with a stderr warning.
 if command -v python3 >/dev/null 2>&1; then
   PY=python3
 elif command -v python >/dev/null 2>&1 && python -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' 2>/dev/null; then
@@ -37,6 +40,7 @@ else
   exit 0
 fi
 
+# Extract session_id and transcript_path from stdin JSON.
 EXTRACTED=$(printf '%s' "$STDIN_JSON" | "$PY" -c "
 import sys, json, hashlib, re
 try:
@@ -65,69 +69,89 @@ if [[ -z "$SAFE_SID" ]]; then
 fi
 
 FLAG="$CACHE_DIR/compact-warned-$SAFE_SID"
-BASELINE_FILE="$CACHE_DIR/compact-baseline-$SAFE_SID"
 
-BASELINE=0
-if [[ -r "$BASELINE_FILE" ]]; then
-  B_READ=$(cat "$BASELINE_FILE" 2>/dev/null | tr -d '[:space:]')
-  if [[ "$B_READ" =~ ^[0-9]+$ ]]; then
-    BASELINE=$B_READ
-  fi
-fi
-
-# RESET (PostCompact): refresh baseline, clear the warned flag.
-if [[ "$MODE" == "RESET" ]]; then
-  if [[ -n "$TRANSCRIPT_PATH" && -r "$TRANSCRIPT_PATH" ]]; then
-    CURRENT_BYTES=$(wc -c <"$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ')
-    if [[ "$CURRENT_BYTES" =~ ^[0-9]+$ ]]; then
-      printf '%s\n' "$CURRENT_BYTES" >"$BASELINE_FILE" 2>/dev/null || true
-    fi
-  fi
-  rm -f "$FLAG" 2>/dev/null || true
-  exit 0
-fi
-
-# UserPromptSubmit: stat transcript, compute delta, decide.
 if [[ -z "$TRANSCRIPT_PATH" || ! -r "$TRANSCRIPT_PATH" ]]; then
   exit 0
 fi
 
-BYTES=$(wc -c <"$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ')
-if [[ -z "$BYTES" || ! "$BYTES" =~ ^[0-9]+$ ]]; then
+# Convert transcript_path to a format the native Python can open. Git Bash
+# on Windows maps /tmp/ and /c/ to NTFS paths that are invisible to a
+# Windows-native python.exe; cygpath -w bridges the gap. On Linux/macOS
+# cygpath isn't present and the path is already native, so we fall through.
+if command -v cygpath >/dev/null 2>&1; then
+  TRANSCRIPT_NATIVE=$(cygpath -w "$TRANSCRIPT_PATH" 2>/dev/null || printf '%s' "$TRANSCRIPT_PATH")
+else
+  TRANSCRIPT_NATIVE="$TRANSCRIPT_PATH"
+fi
+
+# Tail-scan the transcript for the newest main-chain assistant .message.usage.
+# Prints the summed token count or nothing. Defensive at every layer.
+TOKENS=$(printf '%s' "$TRANSCRIPT_NATIVE" | "$PY" -c "
+import sys, json, os
+
+TAIL_BYTES = 262144  # 256 KB
+
+path = sys.stdin.read().strip()
+try:
+    size = os.path.getsize(path)
+except OSError:
+    sys.exit(0)
+try:
+    with open(path, 'rb') as f:
+        f.seek(max(0, size - TAIL_BYTES))
+        tail = f.read().decode('utf-8', errors='replace')
+except OSError:
+    sys.exit(0)
+
+for line in reversed(tail.splitlines()):
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    if not isinstance(d, dict):
+        continue
+    if d.get('isSidechain') is True:
+        continue
+    if d.get('isApiErrorMessage') is True:
+        continue
+    msg = d.get('message')
+    if not isinstance(msg, dict):
+        continue
+    if msg.get('role') != 'assistant':
+        continue
+    u = msg.get('usage')
+    if not isinstance(u, dict):
+        continue
+    it = u.get('input_tokens')
+    if not isinstance(it, int):
+        continue
+    cc = u.get('cache_creation_input_tokens') or 0
+    cr = u.get('cache_read_input_tokens') or 0
+    if not isinstance(cc, int) or not isinstance(cr, int):
+        continue
+    print(it + cc + cr)
+    sys.exit(0)
+" 2>/dev/null)
+
+if [[ -z "$TOKENS" || ! "$TOKENS" =~ ^[0-9]+$ ]]; then
+  # No usable usage in tail — silent no-op (pre-first-turn, parse errors,
+  # schema drift, oversized-straddle, etc.).
   exit 0
 fi
 
-if (( BYTES < BASELINE )); then
-  # Transcript rotated; treat delta as absolute bytes.
-  DELTA=$BYTES
-else
-  DELTA=$(( BYTES - BASELINE ))
-fi
-
-if (( DELTA < THRESHOLD )); then
+if (( TOKENS < THRESHOLD )); then
   # Below threshold — clear any stale flag so a future legitimate crossing fires.
   rm -f "$FLAG" 2>/dev/null || true
   exit 0
 fi
 
 if [[ -e "$FLAG" ]]; then
+  # Flag already set — suppress re-fire within this delta-crossing.
   exit 0
 fi
 
 : >"$FLAG"
 
-# The "~450K tokens on Opus 4.7" calibration is only accurate for the 4 MB
-# default threshold. Drop it when the user has overridden the threshold.
-if (( THRESHOLD == 4000000 )); then
-  CALIBRATION=', ~450K tokens on Opus 4.7'
-else
-  CALIBRATION=''
-fi
-
-if (( BASELINE > 0 )); then
-  printf 'Session transcript is approximately %s bytes, delta %s bytes since last compact (above the configured threshold of %s bytes%s). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user.\n' "$BYTES" "$DELTA" "$THRESHOLD" "$CALIBRATION"
-else
-  printf 'Session transcript is approximately %s bytes (above the configured threshold of %s bytes%s). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user.\n' "$BYTES" "$THRESHOLD" "$CALIBRATION"
-fi
+printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user.\n' "$TOKENS" "$THRESHOLD"
 
 exit 0
