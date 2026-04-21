@@ -25,8 +25,8 @@ mkdir -p "$CACHE"
 FAIL=0
 PASS=0
 # EXPECTED_PASS MUST equal the exact count of assert_eq + assert_true calls.
-# Tally (T-1..T-19): 3+2+2+2+2+2+2+1+1+1+2+2+2+1+8+2+2+1+1 = 39
-EXPECTED_PASS=39
+# Tally (T-1..T-20): 3+2+2+2+2+2+2+1+1+1+2+2+2+1+8+2+2+1+1+6 = 45
+EXPECTED_PASS=45
 
 # Python resolution: mirror the hook. Tests invoke python for fixture
 # generation and SHA-1 hashing.
@@ -243,6 +243,31 @@ else
   printf 'FAIL: ups-real.json missing (T-19 cannot run)\n' >&2
   FAIL=$((FAIL+1))
 fi
+
+# --- T-20: end-to-end warn -> /compact (context drops) -> re-arm cycle
+# Codex diff-review flagged that v2.0.0 removes PostCompact and claims the
+# natural below-threshold branch handles re-arm, but the harness only tested
+# threshold-change stale-flag cleanup (T-16), never the real post-compact
+# flow: transcript shrinks because /compact rewrites it, usage drops, flag
+# clears, then transcript grows again and we re-warn cleanly.
+cleanup
+# Step 1: big transcript -> reminder fires, flag set
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s20","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
+assert_true "T-20: step 1 big transcript -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
+assert_true "T-20: step 1 flag set" '[[ -e "$CACHE/compact-warned-s20" ]]'
+
+# Step 2: /compact simulation — transcript rewritten to a smaller one
+# whose newest main-chain usage is below threshold.
+POSTCOMPACT='{"message":{"role":"assistant","usage":{"input_tokens":5,"cache_creation_input_tokens":50000,"cache_read_input_tokens":0}}}'
+make_transcript "$FIX/t20-post-compact.jsonl" "$POSTCOMPACT"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s20","transcript_path":"'"$FIX/t20-post-compact.jsonl"'"}')
+assert_eq "T-20: step 2 post-compact small transcript -> silent" "" "$OUT"
+assert_true "T-20: step 2 flag cleared by below-threshold branch" '[[ ! -e "$CACHE/compact-warned-s20" ]]'
+
+# Step 3: transcript grows again -> re-arm fires a fresh reminder
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s20","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
+assert_true "T-20: step 3 re-arm fires reminder" '[[ "$OUT" == *"prep-compact"* ]]'
+assert_true "T-20: step 3 flag re-set" '[[ -e "$CACHE/compact-warned-s20" ]]'
 
 # --- Final guard: false-green blocker
 if (( PASS != EXPECTED_PASS )); then
