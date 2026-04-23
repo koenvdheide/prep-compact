@@ -4,6 +4,31 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-04-23
+
+Optional status-line accelerator. Additive opt-in: if the snapshot directory is empty (never configured, or freshly removed), hook behavior matches v2.1.0 exactly and all pre-existing assertions pass unchanged. A leftover fresh snapshot from a prior `statusLine`-configured session can change behavior on the very next user prompt; beyond that the transcript rewrites invalidate it and the fallback takes over.
+
+### Added
+
+- **Companion status-line writer.** `scripts/write_context_snapshot.py` reads Claude Code's status-line JSON, derives the current context token count from `context_window.current_usage` (falling back to `used_percentage × context_window_size` when `current_usage` is null), and persists a three-field snapshot (`current_context_tokens`, `transcript_mtime_ns`, `transcript_size`) at `~/.claude/cache/prep-compact-snapshots/<safe_sid>.json`. Opt-in via a `statusLine` entry in `~/.claude/settings.json` (see README).
+- **Snapshot fast path in the hook.** `hooks/check-context-size.sh` now consults the snapshot before tail-scanning the transcript. When the snapshot's `transcript_mtime_ns` and `transcript_size` match the live transcript's current stat, the hook uses the snapshot's token count and skips the scan entirely. Freshness mismatch falls through to the existing scan with zero behavior change.
+- **27 new assertions.** 17 snapshot integration tests (T-21..T-29b, including above- and below-threshold impossible-output proofs that the fast path was used, a three-phase re-arm cycle through the fast path, and freshness-gate mismatch / malformed / wrong-type / Windows-path fallbacks) plus 10 writer-script tests (token math for both waterfall paths, null-stale-deletion, `safe_sid` sanitization parity with the hook, schema exactness, and stdout-contract assertions for the `ctx N/M` and `ctx —` placeholder cases). Total assertions: 72.
+
+### Changed
+
+- **Test harness** refactored to stage snapshot fixtures with one call and sandbox `HOME`+`USERPROFILE` so Python's `expanduser('~')` redirects cleanly on both POSIX (`HOME`-based) and Windows (`USERPROFILE`-based). New helpers: `write_snapshot_for`, `write_snapshot_raw`, `read_snapshot_field`, `read_snapshot_keys`, `snap_python`.
+- **PRIVACY.md** extended to enumerate the snapshot file's three integer fields and affirm no session content, paths, or timestamps are persisted.
+
+### Accepted limitations
+
+- **Terminal Claude Code only.** Status-line renders drive the writer reliably in the CLI TUI; IDE extensions (VSCode, JetBrains) may not render status lines mid-session, in which case the plugin silently falls back to the transcript parser — identical to v2.1.0 behavior.
+- **Settings changes need restart.** Mid-session `statusLine` additions do not hot-reload in Claude Code.
+- **Same-path same-size same-mtime in-place rewrites** can theoretically mask stale snapshots, but Claude Code's append-only transcripts and size-changing `/compact` make this practically unreachable.
+
+### Rationale
+
+Three Codex red-team rounds plus a live spike converged on this minimal shape: three-integer schema, no new public env var, inline 5-line sanitization in both writer and hook (vs. a shared helper module), no status-line stdout threshold marker (the reminder carries the number already). The schema deliberately excludes any filesystem path field because cross-platform path-form normalization (Git Bash `/c/...` vs Windows `C:\...`) would either require the writer to shell out to `cygpath` or the hook to soft-compare normalized forms — neither earns its keep when mtime+size is a sufficient per-session freshness gate.
+
 ## [2.1.0] - 2026-04-23
 
 Skill-side refinement. Two additions to `SKILL.md`. No hook, config, or test changes.

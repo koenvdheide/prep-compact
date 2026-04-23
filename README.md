@@ -46,6 +46,27 @@ Set it in your shell profile or `~/.claude/settings.json` under `env`:
 }
 ```
 
+## Optional: live context in your status line (v2.2.0)
+
+An optional companion script lets Claude Code's status line drive the hook directly off Claude Code's official `context_window` data instead of tail-scanning the transcript. The hook silently falls back to the transcript parser when the snapshot is absent or stale, so the companion is purely additive.
+
+Add a `statusLine` entry to `~/.claude/settings.json`, pointing at the bundled writer by absolute path:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "python /absolute/path/to/prep-compact/scripts/write_context_snapshot.py"
+  }
+}
+```
+
+On each status-line render where Claude Code has supplied a usable `context_window` and the transcript file can be stat'd, the writer stores one tiny JSON file at `~/.claude/cache/prep-compact-snapshots/<session_id>.json` containing the current token count plus the transcript's `mtime_ns` and `size`. When the token count cannot be derived (`current_usage` null early in the session AND `used_percentage` also null, or the transcript cannot be stat'd), the writer deletes any stale snapshot rather than leaving old data behind. The hook prefers the snapshot on the next user prompt when the fingerprint matches the current transcript, and falls back to the tail-scan otherwise. `/compact` invalidates the fingerprint automatically, so re-arm works unchanged.
+
+**Caveat: terminal Claude Code only.** The status line renders reliably in the CLI TUI. Mid-session settings changes do not hot-reload — restart Claude Code after adding the `statusLine` entry. IDE extensions (VSCode, JetBrains) may not drive status-line renders at all; in those environments no snapshot is written and the hook's behavior matches v2.1.0.
+
+**Note on leftover snapshots.** If you use the `statusLine` companion and later remove it, a leftover snapshot may still be fresh for the current transcript on the next user prompt. The hook will use it once; the next rewriting of the transcript (normal assistant turn, `/compact`) makes it stale and the hook falls back. To force clean pure-v2.1.0 behavior, delete `~/.claude/cache/prep-compact-snapshots/`.
+
 ## Security and privacy
 
 The hook reads `session_id` and `transcript_path` from stdin. Nothing is sent over the network. `session_id` is validated against `^[A-Za-z0-9_-]{1,64}$` before use as a filename; exotic values fall back to a SHA-1 hex hash. The flag file is an empty presence marker — no content recorded.
