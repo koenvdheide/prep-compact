@@ -4,6 +4,22 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-04-23
+
+Skill-side refinement. Two additions to `SKILL.md`. No hook, config, or test changes.
+
+### Added
+
+- **`verify=` subslot in `state:`.** Shortest rerunnable command (e.g. `verify="bash test/run-tests.sh"`), separate from the existing `tests=passing/failing/unknown` status label. Resumes that need to reconfirm state now carry the executable alongside the historical verdict. Single-line fallback updated in parallel so both schema variants stay in sync.
+
+### Changed
+
+- **Compression guidance** names what to drop (chitchat, transient tool output, exploratory dead ends that were not acted on) in addition to the existing preserve list. The current "preserve verbatim paths, identifiers, decisions, constraints, blockers, agent-IDs" line was implicitly a preserve policy only; the explicit drop clause sharpens the instruction without reorganizing the schema.
+
+### Rationale
+
+Applied a research survey of context-management literature (Lost in the Middle, MemGPT, Reflexion, Query Rewriting for RAG) to prep-compact's actual architecture — emit an instruction block into a replace-the-transcript command. Most of the surveyed ideas assume runtime mechanisms prep-compact doesn't have and can't cheaply add: paging tiers, RAG retrieval, episodic memory buffers. Two ideas survived the architecture filter and ship here. Rejected: layered schema reorg (doesn't fit `/compact`'s replace-the-transcript semantics — no lazy-load layer, so a "recall only if needed" bucket is nonsensical); persistent-instructions externalization (out of scope — nudging the user to migrate durable rules into `CLAUDE.md` or `MEMORY.md` belongs in the user's own workflow, not in a skill whose job is producing a `/compact` block); risk register (speculative / performative, overlaps existing `constraints` and `blockers`); context-risk-based trigger (over-engineered, contradicts the just-shipped v2.0.0 token-based trigger — Lost in the Middle documents position- and length-driven degradation, and a token threshold is design inference from that rather than a policy the paper prescribes, so semantic-noise-ratio triggers are further downstream speculation); retrieval grep terms (duplicate `files`).
+
 ## [2.0.0] - 2026-04-20
 
 Token-only rewrite. The hook now reads real token counts from the transcript `.jsonl`'s `.message.usage` metadata instead of approximating with transcript byte size.

@@ -16,7 +16,7 @@ Only claim what is actually observable from the current session. Omit rather tha
   - **Next step:** the immediate next action that was about to happen. Must be *executable*, not thematic. Use a verb anchor: `edit <path>[:<symbol>]`, `run <command>`, `inspect <file> for <issue>`, `ask user <question>`, `wait for agent <id>`. If the session is genuinely uncertain what to do next, that uncertainty belongs in `decisions.blockers`, and `next` should name the blocker that must be resolved before work resumes.
 - **Source-of-truth docs/files** — paths to the active plan/spec file and the key source files needed to execute `next`. Paths only, not content; the post-compact session re-reads. Order: spec/plan first, then code files in order of relevance to `next`.
 - **Decisions + constraints + blockers** — decisions already made with their rationale; outstanding constraints (hard requirements, anti-patterns the user has stated); blockers (unresolved review/QA findings, failing tests, pending user answers).
-- **Execution state** — uncommitted changes, test status if known, mid-implementation markers, running background agents.
+- **Execution state** — uncommitted changes, test status + the shortest rerunnable verification command, mid-implementation markers, running background agents.
 
 ## 2. Produce the /compact block using this mini-schema
 
@@ -27,7 +27,7 @@ goal: <one sentence>
 next: <verb anchor — edit/run/inspect/ask/wait — concrete enough to execute without re-asking the user>
 files: <minimum set needed to execute `next`, spec/plan first, code files after in relevance order>
 decisions: decided=<key decisions with rationale>; constraints=<hard requirements + anti-patterns user stated>; blockers=<unresolved review/QA findings, failing tests, pending user answers>
-state: changes=<uncommitted files>; tests=<passing/failing/unknown>; in_progress=<mid-implementation markers>; agents=<"agent <id>: wait|ignore|close" per running agent, or "none">
+state: changes=<uncommitted files>; tests=<passing/failing/unknown>; verify=<shortest rerunnable command, e.g. "bash test/run-tests.sh" — omit if none>; in_progress=<mid-implementation markers>; agents=<"agent <id>: wait|ignore|close" per running agent, or "none">
 ```
 
 Subslots may be omitted when truly empty (e.g. `decisions: decided=X` if no constraints or blockers). Write `none` only when silence would be ambiguous.
@@ -35,10 +35,10 @@ Subslots may be omitted when truly empty (e.g. `decisions: decided=X` if no cons
 Single-line fallback if `/compact` strips newlines:
 
 ```
-goal: ... | next: ... | files: ... | decisions: decided=...; constraints=...; blockers=... | state: changes=...; tests=...; in_progress=...; agents=...
+goal: ... | next: ... | files: ... | decisions: decided=...; constraints=...; blockers=... | state: changes=...; tests=...; verify=...; in_progress=...; agents=...
 ```
 
-**Compression:** preserve verbatim paths, identifiers, decisions, constraints, blockers, agent-IDs. If length presses, reference the plan/spec file path and omit redundant file enumerations rather than inlining everything.
+**Compression:** preserve verbatim paths, identifiers, decisions, constraints, blockers, agent-IDs. Drop chitchat, transient tool output, and exploratory dead ends that were not acted on — but keep error text or dead ends that underpin a current blocker or decision. If length presses, reference the plan/spec file path and omit redundant file enumerations rather than inlining everything.
 
 ## 3. Present to the user
 
