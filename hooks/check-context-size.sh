@@ -84,8 +84,38 @@ else
   TRANSCRIPT_NATIVE="$TRANSCRIPT_PATH"
 fi
 
-# Tail-scan the transcript for the newest main-chain assistant .message.usage.
-# Prints the summed token count or nothing. Defensive at every layer.
+# Snapshot fast path (v2.2.0). An optional statusLine companion
+# (scripts/write_context_snapshot.py) persists the current token count to
+# ~/.claude/cache/prep-compact-snapshots/<safe_sid>.json with a transcript
+# fingerprint (mtime_ns + size). Prefer that snapshot when the fingerprint
+# matches the current transcript; otherwise fall through unchanged to the
+# transcript tail-scan below. When the snapshot dir is empty (statusLine
+# never configured), behavior matches v2.1.0 exactly.
+TOKENS=$(PREP_COMPACT_SAFE_SID="$SAFE_SID" PREP_COMPACT_TRANSCRIPT_NATIVE="$TRANSCRIPT_NATIVE" "$PY" -c '
+import os, json
+safe_sid = os.environ.get("PREP_COMPACT_SAFE_SID", "")
+transcript = os.environ.get("PREP_COMPACT_TRANSCRIPT_NATIVE", "")
+if not safe_sid or not transcript:
+    raise SystemExit(0)
+snap_path = os.path.join(os.path.expanduser("~"), ".claude", "cache", "prep-compact-snapshots", safe_sid + ".json")
+try:
+    with open(snap_path, "r", encoding="utf-8") as f:
+        snap = json.load(f)
+    st = os.stat(transcript)
+    if (isinstance(snap.get("current_context_tokens"), int)
+        and isinstance(snap.get("transcript_mtime_ns"), int)
+        and isinstance(snap.get("transcript_size"), int)
+        and snap["transcript_mtime_ns"] == st.st_mtime_ns
+        and snap["transcript_size"] == st.st_size):
+        print(snap["current_context_tokens"])
+except Exception:
+    pass
+' 2>/dev/null)
+
+# If the snapshot branch did not yield a usable count, run the transcript
+# tail-scan: the newest main-chain assistant .message.usage. Prints the
+# summed token count or nothing. Defensive at every layer.
+if [[ -z "$TOKENS" || ! "$TOKENS" =~ ^[0-9]+$ ]]; then
 TOKENS=$(printf '%s' "$TRANSCRIPT_NATIVE" | "$PY" -c "
 import sys, json, os
 
@@ -132,10 +162,12 @@ for line in reversed(tail.splitlines()):
     print(it + cc + cr)
     sys.exit(0)
 " 2>/dev/null)
+fi
 
 if [[ -z "$TOKENS" || ! "$TOKENS" =~ ^[0-9]+$ ]]; then
-  # No usable usage in tail — silent no-op (pre-first-turn, parse errors,
-  # schema drift, oversized-straddle, etc.).
+  # No usable token count from either path — silent no-op (pre-first-turn,
+  # parse errors, schema drift, oversized-straddle, absent+unparseable
+  # transcript tail, etc.).
   exit 0
 fi
 

@@ -25,8 +25,14 @@ mkdir -p "$CACHE"
 FAIL=0
 PASS=0
 # EXPECTED_PASS MUST equal the exact count of assert_eq + assert_true calls.
-# Tally (T-1..T-20): 3+2+2+2+2+2+2+1+1+1+2+2+2+1+8+2+2+1+1+6 = 45
-EXPECTED_PASS=45
+# Tally (T-1..T-20):  3+2+2+2+2+2+2+1+1+1+2+2+2+1+8+2+2+1+1+6 = 45
+# Tally (T-21..T-29b, snapshot fast-path; T-26 intentionally absent):
+#   2+2+6+1+1+1+1+2+1 = 17
+# Tally (W-1..W-5, writer; W-1 and W-3 each carry a stdout-contract assertion
+# in addition to the core behavior check):
+#   2+1+3+3+1 = 10
+# Total: 45 + 17 + 10 = 72
+EXPECTED_PASS=72
 
 # Python resolution: mirror the hook. Tests invoke python for fixture
 # generation and SHA-1 hashing.
@@ -41,7 +47,7 @@ fi
 
 run_hook() {
   local stdin=$1; shift
-  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" bash "$HOOK" "$@" 2>/dev/null
+  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" USERPROFILE="$SANDBOX_HOME" bash "$HOOK" "$@" 2>/dev/null
 }
 
 # Variant that preserves stderr so tests can capture warn messages. T-14 and
@@ -49,7 +55,7 @@ run_hook() {
 # expected-silent tests clean.
 run_hook_err() {
   local stdin=$1; shift
-  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" bash "$HOOK" "$@"
+  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" USERPROFILE="$SANDBOX_HOME" bash "$HOOK" "$@"
 }
 
 assert_eq() {
@@ -84,6 +90,89 @@ make_transcript() {
   for line in "$@"; do
     printf '%s\n' "$line" >>"$path"
   done
+}
+
+# Snapshot-path helpers.
+# SNAP_DIR is the bash view of the snapshot dir; bash file tests handle
+# Git Bash /tmp/ aliases fine, so [[ -f "$SNAP_DIR/foo.json" ]] works.
+# Python I/O cannot — Windows-native python.exe cannot open /tmp/...
+# Writer and hook's inline Python both compute paths via os.path.expanduser,
+# and HOME+USERPROFILE are overridden below so expanduser lands in-sandbox.
+# Test-side Python read-backs use `snap_python` to get the same behavior.
+SNAP_DIR="$SANDBOX_HOME/.claude/cache/prep-compact-snapshots"
+WRITER="$SCRIPT_DIR/../scripts/write_context_snapshot.py"
+
+# Native-path helper (bash-only). Only needed where a path crosses into
+# Python via plain -c (not snap_python), e.g. get_transcript_meta.
+native_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1" 2>/dev/null || printf '%s' "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# Invoke Python with HOME+USERPROFILE pointed at the sandbox so
+# os.path.expanduser('~') resolves to the same place as the writer/hook use.
+snap_python() {
+  HOME="$SANDBOX_HOME" USERPROFILE="$SANDBOX_HOME" "$PY" "$@"
+}
+
+# Emit "mtime_ns size" (one line) for a transcript file.
+get_transcript_meta() {
+  "$PY" -c 'import os,sys; s=os.stat(sys.argv[1]); print(s.st_mtime_ns, s.st_size)' "$(native_path "$1")"
+}
+
+# Write a snapshot fixture for a given session and transcript, matching the
+# transcript's current mtime_ns + size so the fast path accepts it. Use
+# write_snapshot_raw() to force a deliberate mismatch.
+write_snapshot_for() {
+  local safe_sid=$1 tokens=$2 transcript=$3 mtime size
+  read -r mtime size < <(get_transcript_meta "$transcript")
+  write_snapshot_raw "$safe_sid" "$tokens" "$mtime" "$size"
+}
+
+write_snapshot_raw() {
+  local safe_sid=$1 tokens=$2 mtime_ns=$3 size=$4
+  mkdir -p "$SNAP_DIR"
+  "$PY" -c '
+import json, sys
+d = {"current_context_tokens": int(sys.argv[1]),
+     "transcript_mtime_ns":    int(sys.argv[2]),
+     "transcript_size":        int(sys.argv[3])}
+with open(sys.argv[4], "w", encoding="utf-8") as f: json.dump(d, f)
+' "$tokens" "$mtime_ns" "$size" "$SNAP_DIR/$safe_sid.json"
+}
+
+# Read a single snapshot field via the same expanduser computation the
+# writer/hook use. Returns empty on any error.
+read_snapshot_field() {
+  snap_python -c '
+import json, os, sys
+p = os.path.join(os.path.expanduser("~"), ".claude", "cache", "prep-compact-snapshots", sys.argv[1]+".json")
+try:
+    with open(p) as f: d = json.load(f)
+    print(d.get(sys.argv[2], ""))
+except Exception: pass
+' "$1" "$2" 2>/dev/null
+}
+
+# Emit comma-joined sorted key list for a snapshot (or empty on error).
+read_snapshot_keys() {
+  snap_python -c '
+import json, os, sys
+p = os.path.join(os.path.expanduser("~"), ".claude", "cache", "prep-compact-snapshots", sys.argv[1]+".json")
+try:
+    with open(p) as f: d = json.load(f)
+    print(",".join(sorted(d.keys())))
+except Exception: pass
+' "$1" 2>/dev/null
+}
+
+# Invoke the writer script with stdin JSON. Sandboxed env so expanduser
+# lands inside SANDBOX_HOME.
+run_writer() {
+  printf '%s' "$1" | snap_python "$WRITER" 2>/dev/null
 }
 
 # --- T-1: token count above threshold -> reminder fires with token message
@@ -268,6 +357,176 @@ assert_true "T-20: step 2 flag cleared by below-threshold branch" '[[ ! -e "$CAC
 OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s20","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
 assert_true "T-20: step 3 re-arm fires reminder" '[[ "$OUT" == *"prep-compact"* ]]'
 assert_true "T-20: step 3 flag re-set" '[[ -e "$CACHE/compact-warned-s20" ]]'
+
+# =============================================================================
+# Snapshot fast-path (v2.2.0): optional statusLine-driven per-session snapshot.
+# Hook prefers it when the transcript fingerprint (mtime_ns + size) matches;
+# otherwise falls through to the transcript tail-scan unchanged.
+# =============================================================================
+
+# Small assistant-line fixtures reused across tests. Each transcript file is
+# a single JSONL line so the tail-scan sum is deterministic.
+LINE_100K='{"message":{"role":"assistant","usage":{"input_tokens":50000,"cache_creation_input_tokens":50000,"cache_read_input_tokens":0}}}'
+LINE_500K='{"message":{"role":"assistant","usage":{"input_tokens":250000,"cache_creation_input_tokens":250000,"cache_read_input_tokens":0}}}'
+LINE_50K='{"message":{"role":"assistant","usage":{"input_tokens":5,"cache_creation_input_tokens":50000,"cache_read_input_tokens":0}}}'
+
+# --- T-21: above-threshold impossible-output proves fast path taken.
+# Snapshot=500000, transcript=100000, threshold=200000. The transcript tail
+# would fall below threshold and exit silent; only the fast path can emit
+# a reminder carrying 500000.
+cleanup
+make_transcript "$FIX/t21.jsonl" "$LINE_100K"
+write_snapshot_for "s21" 500000 "$FIX/t21.jsonl"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s21","transcript_path":"'"$FIX/t21.jsonl"'"}')
+assert_true "T-21: fresh snapshot above threshold -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
+assert_true "T-21: reminder reports 500000 (snapshot, not transcript 100000)" '[[ "$OUT" == *"500000"* ]]'
+
+# --- T-22: below-threshold impossible-output proves fast path taken.
+# Snapshot=100000 (below), transcript=500000 (above), threshold=200000,
+# pre-set stale flag. Transcript fallback would see above-threshold and
+# leave the flag set; only the fast path clears the flag here.
+cleanup
+make_transcript "$FIX/t22.jsonl" "$LINE_500K"
+write_snapshot_for "s22" 100000 "$FIX/t22.jsonl"
+: >"$CACHE/compact-warned-s22"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s22","transcript_path":"'"$FIX/t22.jsonl"'"}')
+assert_eq "T-22: fresh snapshot below threshold -> silent stdout" "" "$OUT"
+assert_true "T-22: stale flag cleared by below-threshold branch via snapshot" '[[ ! -e "$CACHE/compact-warned-s22" ]]'
+
+# --- T-23: re-arm cycle through the fast path.
+# Phase 1: fresh high snap (750000, impossible via 500000 transcript) -> warn.
+# Phase 2: transcript rewritten small -> snap stale -> fallback -> flag clears.
+# Phase 3: transcript restored + refreshed high snap -> warn fires again.
+cleanup
+make_transcript "$FIX/t23.jsonl" "$LINE_500K"
+write_snapshot_for "s23" 750000 "$FIX/t23.jsonl"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s23","transcript_path":"'"$FIX/t23.jsonl"'"}')
+assert_true "T-23: phase 1 fast path reports 750000" '[[ "$OUT" == *"750000"* ]]'
+assert_true "T-23: phase 1 flag set" '[[ -e "$CACHE/compact-warned-s23" ]]'
+make_transcript "$FIX/t23.jsonl" "$LINE_50K"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s23","transcript_path":"'"$FIX/t23.jsonl"'"}')
+assert_eq "T-23: phase 2 stale snap + small transcript -> silent" "" "$OUT"
+assert_true "T-23: phase 2 flag cleared via transcript fallback" '[[ ! -e "$CACHE/compact-warned-s23" ]]'
+make_transcript "$FIX/t23.jsonl" "$LINE_500K"
+write_snapshot_for "s23" 750000 "$FIX/t23.jsonl"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s23","transcript_path":"'"$FIX/t23.jsonl"'"}')
+assert_true "T-23: phase 3 refreshed fast path reports 750000" '[[ "$OUT" == *"750000"* ]]'
+assert_true "T-23: phase 3 flag re-set" '[[ -e "$CACHE/compact-warned-s23" ]]'
+
+# --- T-24: mtime_ns mismatch -> fallback. Snapshot claims 500000 but the
+# fingerprint won't match; fallback reads transcript (below threshold, silent).
+cleanup
+make_transcript "$FIX/t24.jsonl" "$LINE_100K"
+read -r _ T24_SIZE < <(get_transcript_meta "$FIX/t24.jsonl")
+write_snapshot_raw "s24" 500000 "99999999999" "$T24_SIZE"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s24","transcript_path":"'"$FIX/t24.jsonl"'"}')
+assert_eq "T-24: mtime_ns mismatch -> transcript fallback silent" "" "$OUT"
+
+# --- T-25: size mismatch -> fallback (same rationale as T-24).
+cleanup
+make_transcript "$FIX/t25.jsonl" "$LINE_100K"
+read -r T25_MTIME _ < <(get_transcript_meta "$FIX/t25.jsonl")
+write_snapshot_raw "s25" 500000 "$T25_MTIME" "999"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s25","transcript_path":"'"$FIX/t25.jsonl"'"}')
+assert_eq "T-25: size mismatch -> transcript fallback silent" "" "$OUT"
+
+# --- T-26 intentionally absent. Freshness gate is mtime_ns + size;
+# T-24 (mtime mismatch) and T-25 (size mismatch) cover its two fields.
+
+# --- T-27: malformed snapshot JSON -> fallback.
+cleanup
+make_transcript "$FIX/t27.jsonl" "$LINE_100K"
+mkdir -p "$SNAP_DIR"
+printf '%s\n' '{not valid json' >"$SNAP_DIR/s27.json"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s27","transcript_path":"'"$FIX/t27.jsonl"'"}')
+assert_eq "T-27: malformed snapshot JSON -> transcript fallback silent" "" "$OUT"
+
+# --- T-28: wrong-typed current_context_tokens -> fallback.
+cleanup
+make_transcript "$FIX/t28.jsonl" "$LINE_100K"
+read -r T28_MTIME T28_SIZE < <(get_transcript_meta "$FIX/t28.jsonl")
+mkdir -p "$SNAP_DIR"
+"$PY" -c '
+import json, sys
+d = {"current_context_tokens": "not-an-int",
+     "transcript_mtime_ns": int(sys.argv[1]),
+     "transcript_size": int(sys.argv[2])}
+with open(sys.argv[3], "w", encoding="utf-8") as f: json.dump(d, f)
+' "$T28_MTIME" "$T28_SIZE" "$SNAP_DIR/s28.json"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s28","transcript_path":"'"$FIX/t28.jsonl"'"}')
+assert_eq "T-28: wrong-typed current_context_tokens -> fallback" "" "$OUT"
+
+# --- T-29a: expanduser round-trip — snapshot written under the sandbox is
+# read by the hook's inline Python using the same expanduser path.
+cleanup
+make_transcript "$FIX/t29a.jsonl" "$LINE_100K"
+write_snapshot_for "s29a" 500000 "$FIX/t29a.jsonl"
+assert_true "T-29a: snapshot fixture exists at sandbox SNAP_DIR" '[[ -f "$SNAP_DIR/s29a.json" ]]'
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s29a","transcript_path":"'"$FIX/t29a.jsonl"'"}')
+assert_true "T-29a: hook reads snapshot -> reminder reports 500000" '[[ "$OUT" == *"500000"* ]]'
+
+# --- T-29b: raw Git Bash /c/... transcript path with no file at that path.
+# Hook's readability guard exits silently (line 73 of hooks/check-context-size.sh);
+# snapshot branch is never reached. Guards against crash regressions.
+cleanup
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"s29b","transcript_path":"/c/nonexistent/bogus/t29b.jsonl"}' 2>/dev/null)
+assert_eq "T-29b: raw /c/... path -> silent, no crash" "" "$OUT"
+
+# =============================================================================
+# Writer tests: scripts/write_context_snapshot.py directly, via fixture stdin.
+# =============================================================================
+
+# Writer stdin factory: most W tests differ only in the embedded context_window.
+writer_stdin() {
+  local sid=$1 transcript=$2 cw=$3
+  printf '{"session_id":"%s","transcript_path":"%s","context_window":%s}' "$sid" "$transcript" "$cw"
+}
+
+# --- W-1: current_usage path math (input + cache_creation + cache_read;
+# output_tokens deliberately excluded as per-turn output, not context size).
+# Also asserts the stdout contract `ctx <tokens>/<ctxsize>` when both are known.
+cleanup
+make_transcript "$FIX/w1.jsonl" "$LINE_100K"
+W1_STDOUT=$(run_writer "$(writer_stdin w1 "$FIX/w1.jsonl" '{"context_window_size":1000000,"used_percentage":30,"current_usage":{"input_tokens":100000,"output_tokens":9999999,"cache_creation_input_tokens":200000,"cache_read_input_tokens":50000}}')")
+assert_eq "W-1: current_usage sums to 350000, output_tokens excluded" "350000" "$(read_snapshot_field w1 current_context_tokens)"
+assert_true "W-1: stdout reports ctx 350k/1.0M" '[[ "$W1_STDOUT" == "ctx 350k/1.0M" ]]'
+
+# --- W-2: used_percentage fallback when current_usage is null.
+# round(44.5/100 * 1000000) = 445000.
+cleanup
+make_transcript "$FIX/w2.jsonl" "$LINE_100K"
+run_writer "$(writer_stdin w2 "$FIX/w2.jsonl" '{"context_window_size":1000000,"used_percentage":44.5,"current_usage":null}')" >/dev/null
+assert_eq "W-2: used_percentage fallback rounds to 445000" "445000" "$(read_snapshot_field w2 current_context_tokens)"
+
+# --- W-3: both token sources null -> stale snapshot deleted, placeholder out.
+cleanup
+make_transcript "$FIX/w3.jsonl" "$LINE_100K"
+write_snapshot_raw "w3" 999999 "1" "1"
+assert_true "W-3: stale snapshot present before null-usage run" '[[ -f "$SNAP_DIR/w3.json" ]]'
+W3_STDOUT=$(run_writer "$(writer_stdin w3 "$FIX/w3.jsonl" '{"context_window_size":1000000,"used_percentage":null,"current_usage":null}')")
+assert_true "W-3: stale snapshot deleted when both token sources null" '[[ ! -f "$SNAP_DIR/w3.json" ]]'
+assert_true "W-3: stdout prints placeholder when tokens underivable" '[[ "$W3_STDOUT" == "ctx"* ]]'
+
+# --- W-4: safe_sid parity with the hook (regex-valid / oversized / traversal).
+cleanup
+make_transcript "$FIX/w4.jsonl" "$LINE_100K"
+W4_CW='{"context_window_size":1000,"used_percentage":10,"current_usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}'
+run_writer "$(writer_stdin w4-ok "$FIX/w4.jsonl" "$W4_CW")" >/dev/null
+assert_true "W-4a: regex-valid sid -> filename uses sid verbatim" '[[ -f "$SNAP_DIR/w4-ok.json" ]]'
+W4_LONG=$(printf 'a%.0s' {1..200})
+W4_SHA1=$("$PY" -c "import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest())" "$W4_LONG")
+run_writer "$(writer_stdin "$W4_LONG" "$FIX/w4.jsonl" "$W4_CW")" >/dev/null
+assert_true "W-4b: oversized sid -> SHA-1 hex filename" '[[ -f "$SNAP_DIR/$W4_SHA1.json" ]]'
+W4_EVIL='../../evil'
+W4_EVIL_SHA1=$("$PY" -c "import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest())" "$W4_EVIL")
+run_writer "$(writer_stdin "$W4_EVIL" "$FIX/w4.jsonl" "$W4_CW")" >/dev/null
+assert_true "W-4c: traversal sid -> hashed filename, no escape" '[[ -f "$SNAP_DIR/$W4_EVIL_SHA1.json" ]] && [[ ! -e "$SNAP_DIR/../../evil.json" ]]'
+
+# --- W-5: schema is exactly the 3 declared fields, no extras.
+cleanup
+make_transcript "$FIX/w5.jsonl" "$LINE_100K"
+run_writer "$(writer_stdin w5 "$FIX/w5.jsonl" '{"context_window_size":1000000,"used_percentage":10,"current_usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}')" >/dev/null
+assert_eq "W-5: snapshot keys are exactly the 3 schema fields" "current_context_tokens,transcript_mtime_ns,transcript_size" "$(read_snapshot_keys w5)"
 
 # --- Final guard: false-green blocker
 if (( PASS != EXPECTED_PASS )); then
