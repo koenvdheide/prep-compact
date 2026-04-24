@@ -17,6 +17,7 @@ import json
 import hashlib
 import re
 import tempfile
+from contextlib import suppress
 
 
 def to_native_path(path):
@@ -90,13 +91,6 @@ def atomic_write_json(path, obj):
         raise
 
 
-def delete_if_exists(path):
-    try:
-        os.remove(path)
-    except OSError:
-        pass
-
-
 def main():
     raw = sys.stdin.read()
     payload = json.loads(raw) if raw else None
@@ -112,17 +106,20 @@ def main():
     snap_path = os.path.join(snap_dir, sid_safe + ".json")
 
     transcript_path = to_native_path(payload.get("transcript_path") or "")
-    tokens = compute_tokens(payload.get("context_window"))
+    context_window = payload.get("context_window")
+    tokens = compute_tokens(context_window)
 
     if tokens is None or not transcript_path:
-        delete_if_exists(snap_path)
+        with suppress(OSError):
+            os.remove(snap_path)
         print("ctx —", end="")
         return
 
     try:
         st = os.stat(transcript_path)
     except OSError:
-        delete_if_exists(snap_path)
+        with suppress(OSError):
+            os.remove(snap_path)
         print("ctx —", end="")
         return
 
@@ -132,8 +129,8 @@ def main():
         "transcript_size": int(st.st_size),
     })
 
-    cw = payload.get("context_window") if isinstance(payload.get("context_window"), dict) else {}
-    size_field = cw.get("context_window_size")
+    # compute_tokens() returning non-None guarantees context_window is a dict.
+    size_field = context_window.get("context_window_size")
     if isinstance(size_field, int) and size_field > 0:
         def fmt(n):
             if n >= 1_000_000:

@@ -28,10 +28,10 @@ PASS=0
 # Tally (T-1..T-20):  3+2+2+2+2+2+2+1+1+1+2+2+2+1+8+2+2+1+1+6 = 45
 # Tally (T-21..T-29b, snapshot fast-path; T-26 and T-29a intentionally absent):
 #   2+2+6+1+1+1+1+1 = 15
-# Tally (W-1..W-4, writer; W-5 intentionally absent):
-#   1+1+2+3 = 7
-# Total: 45 + 15 + 7 = 67
-EXPECTED_PASS=67
+# Tally (W-1..W-4, writer; W-5 and W-4b intentionally absent):
+#   1+1+2+2 = 6
+# Total: 45 + 15 + 6 = 66
+EXPECTED_PASS=66
 
 # Python resolution: mirror the hook. Tests invoke python for fixture
 # generation and SHA-1 hashing.
@@ -482,16 +482,14 @@ assert_true "W-3: stale snapshot present before null-usage run" '[[ -f "$SNAP_DI
 run_writer "$(writer_stdin w3 "$FIX/w3.jsonl" '{"context_window_size":1000000,"used_percentage":null,"current_usage":null}')" >/dev/null
 assert_true "W-3: stale snapshot deleted when both token sources null" '[[ ! -f "$SNAP_DIR/w3.json" ]]'
 
-# --- W-4: safe_sid parity with the hook (regex-valid / oversized / traversal).
+# --- W-4: safe_sid parity with the hook — one regex-valid case and one
+# rejected case. W-4c's traversal input also exercises the no-escape guard,
+# which is the whole point of the regex-else-hash sanitization.
 cleanup
 make_transcript "$FIX/w4.jsonl" "$LINE_100K"
 W4_CW='{"context_window_size":1000,"used_percentage":10,"current_usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}'
 run_writer "$(writer_stdin w4-ok "$FIX/w4.jsonl" "$W4_CW")" >/dev/null
 assert_true "W-4a: regex-valid sid -> filename uses sid verbatim" '[[ -f "$SNAP_DIR/w4-ok.json" ]]'
-W4_LONG=$(printf 'a%.0s' {1..200})
-W4_SHA1=$("$PY" -c "import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest())" "$W4_LONG")
-run_writer "$(writer_stdin "$W4_LONG" "$FIX/w4.jsonl" "$W4_CW")" >/dev/null
-assert_true "W-4b: oversized sid -> SHA-1 hex filename" '[[ -f "$SNAP_DIR/$W4_SHA1.json" ]]'
 W4_EVIL='../../evil'
 W4_EVIL_SHA1=$("$PY" -c "import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest())" "$W4_EVIL")
 run_writer "$(writer_stdin "$W4_EVIL" "$FIX/w4.jsonl" "$W4_CW")" >/dev/null

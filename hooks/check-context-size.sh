@@ -84,13 +84,9 @@ else
   TRANSCRIPT_NATIVE="$TRANSCRIPT_PATH"
 fi
 
-# Snapshot fast path (v2.2.0). An optional statusLine companion
-# (scripts/write_context_snapshot.py) persists the current token count to
-# ~/.claude/cache/prep-compact-snapshots/<safe_sid>.json with a transcript
-# fingerprint (mtime_ns + size). Prefer that snapshot when the fingerprint
-# matches the current transcript; otherwise fall through unchanged to the
-# transcript tail-scan below. When the snapshot dir is empty (statusLine
-# never configured), behavior matches v2.1.0 exactly.
+# Snapshot fast path (v2.2.0 opt-in statusLine companion writes
+# ~/.claude/cache/prep-compact-snapshots/<safe_sid>.json). Use it when
+# transcript mtime_ns+size match; else fall through to the tail-scan below.
 TOKENS=$(PREP_COMPACT_SAFE_SID="$SAFE_SID" PREP_COMPACT_TRANSCRIPT_NATIVE="$TRANSCRIPT_NATIVE" "$PY" -c '
 import os, json
 safe_sid = os.environ.get("PREP_COMPACT_SAFE_SID", "")
