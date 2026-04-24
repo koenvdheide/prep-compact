@@ -102,12 +102,11 @@ try:
     with open(snap_path, "r", encoding="utf-8") as f:
         snap = json.load(f)
     st = os.stat(transcript)
-    if (isinstance(snap.get("current_context_tokens"), int)
-        and isinstance(snap.get("transcript_mtime_ns"), int)
-        and isinstance(snap.get("transcript_size"), int)
-        and snap["transcript_mtime_ns"] == st.st_mtime_ns
-        and snap["transcript_size"] == st.st_size):
-        print(snap["current_context_tokens"])
+    # Fingerprint match on mtime_ns + size. Non-int token values fall
+    # through via the shell-side ^[0-9]+$ check on TOKENS.
+    if (snap.get("transcript_mtime_ns") == st.st_mtime_ns
+        and snap.get("transcript_size") == st.st_size):
+        print(snap.get("current_context_tokens", ""))
 except Exception:
     pass
 ' 2>/dev/null)

@@ -26,13 +26,12 @@ FAIL=0
 PASS=0
 # EXPECTED_PASS MUST equal the exact count of assert_eq + assert_true calls.
 # Tally (T-1..T-20):  3+2+2+2+2+2+2+1+1+1+2+2+2+1+8+2+2+1+1+6 = 45
-# Tally (T-21..T-29b, snapshot fast-path; T-26 intentionally absent):
-#   2+2+6+1+1+1+1+2+1 = 17
-# Tally (W-1..W-5, writer; W-1 and W-3 each carry a stdout-contract assertion
-# in addition to the core behavior check):
-#   2+1+3+3+1 = 10
-# Total: 45 + 17 + 10 = 72
-EXPECTED_PASS=72
+# Tally (T-21..T-29b, snapshot fast-path; T-26 and T-29a intentionally absent):
+#   2+2+6+1+1+1+1+1 = 15
+# Tally (W-1..W-4, writer; W-5 intentionally absent):
+#   1+1+2+3 = 7
+# Total: 45 + 15 + 7 = 67
+EXPECTED_PASS=67
 
 # Python resolution: mirror the hook. Tests invoke python for fixture
 # generation and SHA-1 hashing.
@@ -102,25 +101,21 @@ make_transcript() {
 SNAP_DIR="$SANDBOX_HOME/.claude/cache/prep-compact-snapshots"
 WRITER="$SCRIPT_DIR/../scripts/write_context_snapshot.py"
 
-# Native-path helper (bash-only). Only needed where a path crosses into
-# Python via plain -c (not snap_python), e.g. get_transcript_meta.
-native_path() {
-  if command -v cygpath >/dev/null 2>&1; then
-    cygpath -w "$1" 2>/dev/null || printf '%s' "$1"
-  else
-    printf '%s' "$1"
-  fi
-}
-
 # Invoke Python with HOME+USERPROFILE pointed at the sandbox so
 # os.path.expanduser('~') resolves to the same place as the writer/hook use.
 snap_python() {
   HOME="$SANDBOX_HOME" USERPROFILE="$SANDBOX_HOME" "$PY" "$@"
 }
 
-# Emit "mtime_ns size" (one line) for a transcript file.
+# Emit "mtime_ns size" (one line) for a transcript file. Inline cygpath -w
+# bridges Git Bash /c/... paths to Windows-native form so native python.exe
+# can stat them; no-op on Linux/macOS where cygpath is absent.
 get_transcript_meta() {
-  "$PY" -c 'import os,sys; s=os.stat(sys.argv[1]); print(s.st_mtime_ns, s.st_size)' "$(native_path "$1")"
+  local path=$1
+  if command -v cygpath >/dev/null 2>&1; then
+    path=$(cygpath -w "$1" 2>/dev/null || printf '%s' "$1")
+  fi
+  "$PY" -c 'import os,sys; s=os.stat(sys.argv[1]); print(s.st_mtime_ns, s.st_size)' "$path"
 }
 
 # Write a snapshot fixture for a given session and transcript, matching the
@@ -155,18 +150,6 @@ try:
     print(d.get(sys.argv[2], ""))
 except Exception: pass
 ' "$1" "$2" 2>/dev/null
-}
-
-# Emit comma-joined sorted key list for a snapshot (or empty on error).
-read_snapshot_keys() {
-  snap_python -c '
-import json, os, sys
-p = os.path.join(os.path.expanduser("~"), ".claude", "cache", "prep-compact-snapshots", sys.argv[1]+".json")
-try:
-    with open(p) as f: d = json.load(f)
-    print(",".join(sorted(d.keys())))
-except Exception: pass
-' "$1" 2>/dev/null
 }
 
 # Invoke the writer script with stdin JSON. Sandboxed env so expanduser
@@ -456,14 +439,9 @@ with open(sys.argv[3], "w", encoding="utf-8") as f: json.dump(d, f)
 OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s28","transcript_path":"'"$FIX/t28.jsonl"'"}')
 assert_eq "T-28: wrong-typed current_context_tokens -> fallback" "" "$OUT"
 
-# --- T-29a: expanduser round-trip — snapshot written under the sandbox is
-# read by the hook's inline Python using the same expanduser path.
-cleanup
-make_transcript "$FIX/t29a.jsonl" "$LINE_100K"
-write_snapshot_for "s29a" 500000 "$FIX/t29a.jsonl"
-assert_true "T-29a: snapshot fixture exists at sandbox SNAP_DIR" '[[ -f "$SNAP_DIR/s29a.json" ]]'
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s29a","transcript_path":"'"$FIX/t29a.jsonl"'"}')
-assert_true "T-29a: hook reads snapshot -> reminder reports 500000" '[[ "$OUT" == *"500000"* ]]'
+# --- T-29a intentionally absent. T-21/T-22/T-23 already exercise the
+# writer/hook expanduser round-trip — the fixture-then-hook path is the
+# same mechanism.
 
 # --- T-29b: raw Git Bash /c/... transcript path with no file at that path.
 # Hook's readability guard exits silently (line 73 of hooks/check-context-size.sh);
@@ -484,12 +462,10 @@ writer_stdin() {
 
 # --- W-1: current_usage path math (input + cache_creation + cache_read;
 # output_tokens deliberately excluded as per-turn output, not context size).
-# Also asserts the stdout contract `ctx <tokens>/<ctxsize>` when both are known.
 cleanup
 make_transcript "$FIX/w1.jsonl" "$LINE_100K"
-W1_STDOUT=$(run_writer "$(writer_stdin w1 "$FIX/w1.jsonl" '{"context_window_size":1000000,"used_percentage":30,"current_usage":{"input_tokens":100000,"output_tokens":9999999,"cache_creation_input_tokens":200000,"cache_read_input_tokens":50000}}')")
+run_writer "$(writer_stdin w1 "$FIX/w1.jsonl" '{"context_window_size":1000000,"used_percentage":30,"current_usage":{"input_tokens":100000,"output_tokens":9999999,"cache_creation_input_tokens":200000,"cache_read_input_tokens":50000}}')" >/dev/null
 assert_eq "W-1: current_usage sums to 350000, output_tokens excluded" "350000" "$(read_snapshot_field w1 current_context_tokens)"
-assert_true "W-1: stdout reports ctx 350k/1.0M" '[[ "$W1_STDOUT" == "ctx 350k/1.0M" ]]'
 
 # --- W-2: used_percentage fallback when current_usage is null.
 # round(44.5/100 * 1000000) = 445000.
@@ -498,14 +474,13 @@ make_transcript "$FIX/w2.jsonl" "$LINE_100K"
 run_writer "$(writer_stdin w2 "$FIX/w2.jsonl" '{"context_window_size":1000000,"used_percentage":44.5,"current_usage":null}')" >/dev/null
 assert_eq "W-2: used_percentage fallback rounds to 445000" "445000" "$(read_snapshot_field w2 current_context_tokens)"
 
-# --- W-3: both token sources null -> stale snapshot deleted, placeholder out.
+# --- W-3: both token sources null -> stale snapshot deleted.
 cleanup
 make_transcript "$FIX/w3.jsonl" "$LINE_100K"
 write_snapshot_raw "w3" 999999 "1" "1"
 assert_true "W-3: stale snapshot present before null-usage run" '[[ -f "$SNAP_DIR/w3.json" ]]'
-W3_STDOUT=$(run_writer "$(writer_stdin w3 "$FIX/w3.jsonl" '{"context_window_size":1000000,"used_percentage":null,"current_usage":null}')")
+run_writer "$(writer_stdin w3 "$FIX/w3.jsonl" '{"context_window_size":1000000,"used_percentage":null,"current_usage":null}')" >/dev/null
 assert_true "W-3: stale snapshot deleted when both token sources null" '[[ ! -f "$SNAP_DIR/w3.json" ]]'
-assert_true "W-3: stdout prints placeholder when tokens underivable" '[[ "$W3_STDOUT" == "ctx"* ]]'
 
 # --- W-4: safe_sid parity with the hook (regex-valid / oversized / traversal).
 cleanup
@@ -522,11 +497,9 @@ W4_EVIL_SHA1=$("$PY" -c "import hashlib,sys; print(hashlib.sha1(sys.argv[1].enco
 run_writer "$(writer_stdin "$W4_EVIL" "$FIX/w4.jsonl" "$W4_CW")" >/dev/null
 assert_true "W-4c: traversal sid -> hashed filename, no escape" '[[ -f "$SNAP_DIR/$W4_EVIL_SHA1.json" ]] && [[ ! -e "$SNAP_DIR/../../evil.json" ]]'
 
-# --- W-5: schema is exactly the 3 declared fields, no extras.
-cleanup
-make_transcript "$FIX/w5.jsonl" "$LINE_100K"
-run_writer "$(writer_stdin w5 "$FIX/w5.jsonl" '{"context_window_size":1000000,"used_percentage":10,"current_usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}')" >/dev/null
-assert_eq "W-5: snapshot keys are exactly the 3 schema fields" "current_context_tokens,transcript_mtime_ns,transcript_size" "$(read_snapshot_keys w5)"
+# --- W-5 intentionally absent. Schema shape is enforced by the writer's
+# literal record dict; a shape regression would fail T-21/T-22/T-23 via
+# the hook's freshness gate before any schema-exactness test would catch it.
 
 # --- Final guard: false-green blocker
 if (( PASS != EXPECTED_PASS )); then

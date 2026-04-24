@@ -1,34 +1,15 @@
 #!/usr/bin/env python3
 """
-prep-compact v2.2.0 status-line companion.
+prep-compact v2.2.0 status-line companion. See README.md for setup and
+PRIVACY.md for what's persisted. Fails silent on every error path —
+status-line stderr spams the user's UI.
 
-Reads Claude Code's status-line JSON payload on stdin, computes the current
-main-session context-token count from context_window, and writes a per-session
-snapshot file that the UserPromptSubmit hook uses as an opportunistic fast
-path (freshness-gated against the current transcript's mtime_ns + size).
-
-Configure as a statusLine command in ~/.claude/settings.json. Runs reliably
-in terminal Claude Code (CLI TUI); IDE extensions (VSCode, JetBrains) may
-not drive statusLine renders at all — in those environments the plugin
-silently falls back to the transcript tail-scan (no snapshot written, hook
-behavior identical to v2.1.0 when the snapshot dir is empty).
-
-Exits 0 on every error path (status-line stderr spams the user's UI).
-
-Token-source waterfall:
-  1. context_window.current_usage.{input,cache_creation_input,cache_read_input}_tokens
-     (preferred; output_tokens is deliberately excluded — it's per-turn output,
-     not context size).
-  2. round(context_window.used_percentage / 100 * context_window.context_window_size)
-     (fallback when current_usage is null or malformed).
-  3. Neither populated OR transcript cannot be stat'd: delete any stale
-     snapshot, print placeholder, exit without writing a new one.
-
-Snapshot schema (3 fields, all integers; filename is <safe_sid>.json where
-safe_sid is the hook-side regex/SHA-1 sanitization):
-  current_context_tokens  int  (derived per the waterfall above)
-  transcript_mtime_ns     int  (os.stat(transcript_path).st_mtime_ns)
-  transcript_size         int  (os.stat(transcript_path).st_size)
+Token-source waterfall (first that yields an int wins):
+  1. sum of current_usage.{input,cache_creation_input,cache_read_input}_tokens
+     (output_tokens is per-turn output, not context size — excluded)
+  2. round(used_percentage / 100 * context_window_size)
+  3. neither available OR transcript cannot be stat'd → delete stale snapshot,
+     print placeholder, exit without writing
 """
 import sys
 import os
@@ -40,15 +21,13 @@ import tempfile
 
 def to_native_path(path):
     """Best-effort Git Bash -> Windows native conversion for os.stat calls.
-    No-op on non-Windows platforms. On Windows:
-      /X/rest    -> X:\\rest         (drive letter form)
-      /tmp/rest  -> %TEMP%\\rest     (Git Bash /tmp is alias for TEMP)
-    Other forms are returned as-is; the caller treats stat failure as a
-    cache miss."""
+    No-op on non-Windows. On Windows: /X/rest -> X:\\rest (drive letter form);
+    /tmp/rest -> %TEMP%\\rest (Git Bash /tmp is alias for TEMP). Other forms
+    returned as-is; the caller treats stat failure as a cache miss."""
     if sys.platform != "win32" or not path:
         return path
     if len(path) >= 2 and path[1] == ":":
-        return path  # already native
+        return path
     m = re.match(r"^/([a-zA-Z])(/.*)?$", path)
     if m:
         drive = m.group(1).upper()
@@ -69,10 +48,6 @@ def safe_sid(raw):
     if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", raw):
         return raw
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
-
-
-def snapshot_dir():
-    return os.path.join(os.path.expanduser("~"), ".claude", "cache", "prep-compact-snapshots")
 
 
 def compute_tokens(context_window):
@@ -118,65 +93,47 @@ def atomic_write_json(path, obj):
 def delete_if_exists(path):
     try:
         os.remove(path)
-    except FileNotFoundError:
-        pass
     except OSError:
         pass
 
 
 def main():
-    try:
-        raw = sys.stdin.read()
-    except Exception:
-        return
-
-    try:
-        payload = json.loads(raw) if raw else None
-    except Exception:
-        return
+    raw = sys.stdin.read()
+    payload = json.loads(raw) if raw else None
     if not isinstance(payload, dict):
         return
 
-    sid = payload.get("session_id") or ""
-    sid_safe = safe_sid(sid)
+    sid_safe = safe_sid(payload.get("session_id") or "")
     if not sid_safe:
         return
 
-    try:
-        snap_dir = snapshot_dir()
-        os.makedirs(snap_dir, exist_ok=True)
-    except Exception:
-        return
+    snap_dir = os.path.join(os.path.expanduser("~"), ".claude", "cache", "prep-compact-snapshots")
+    os.makedirs(snap_dir, exist_ok=True)
     snap_path = os.path.join(snap_dir, sid_safe + ".json")
 
-    transcript_path_raw = payload.get("transcript_path") or ""
-    transcript_path_native = to_native_path(transcript_path_raw)
+    transcript_path = to_native_path(payload.get("transcript_path") or "")
     tokens = compute_tokens(payload.get("context_window"))
 
-    if tokens is None or not transcript_path_native:
+    if tokens is None or not transcript_path:
         delete_if_exists(snap_path)
-        print("ctx —", end="")  # em-dash placeholder
+        print("ctx —", end="")
         return
 
     try:
-        st = os.stat(transcript_path_native)
+        st = os.stat(transcript_path)
     except OSError:
         delete_if_exists(snap_path)
         print("ctx —", end="")
         return
 
-    record = {
+    atomic_write_json(snap_path, {
         "current_context_tokens": int(tokens),
         "transcript_mtime_ns": int(st.st_mtime_ns),
         "transcript_size": int(st.st_size),
-    }
+    })
 
-    try:
-        atomic_write_json(snap_path, record)
-    except Exception:
-        return
-
-    size_field = payload.get("context_window", {}).get("context_window_size") if isinstance(payload.get("context_window"), dict) else None
+    cw = payload.get("context_window") if isinstance(payload.get("context_window"), dict) else {}
+    size_field = cw.get("context_window_size")
     if isinstance(size_field, int) and size_field > 0:
         def fmt(n):
             if n >= 1_000_000:
