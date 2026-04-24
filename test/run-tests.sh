@@ -26,12 +26,12 @@ FAIL=0
 PASS=0
 # EXPECTED_PASS MUST equal the exact count of assert_eq + assert_true calls.
 # Tally (T-1..T-20):  3+2+2+2+2+2+2+1+1+1+2+2+2+1+8+2+2+1+1+6 = 45
-# Tally (snapshot fast-path; T-23 collapsed, T-25/T-27/T-28/T-29a absent):
-#   T-21(2) + T-22(2) + T-23(2) + T-24(1) + T-29b(1) = 8
-# Tally (writer; W-5, W-4a, W-4b, W-3 sanity-check absent):
-#   W-1(1) + W-2(1) + W-3(1) + W-4(1) = 4
-# Total: 45 + 8 + 4 = 57
-EXPECTED_PASS=57
+# Tally (snapshot fast-path; T-26/T-28/T-29a absent):
+#   T-21(2) + T-22(2) + T-23(3) + T-24(1) + T-25(1) + T-27(1) + T-29b(1) = 11
+# Tally (writer; W-5, W-4b, W-3 sanity-check absent):
+#   W-1(1) + W-2(1) + W-3(1) + W-4a(1) + W-4c(1) = 5
+# Total: 45 + 11 + 5 = 61
+EXPECTED_PASS=61
 
 # Python resolution: mirror the hook. Tests invoke python for fixture
 # generation and SHA-1 hashing.
@@ -367,8 +367,9 @@ OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s22","transcrip
 assert_eq "T-22: fast path below threshold -> silent" "" "$OUT"
 assert_true "T-22: flag cleared via snapshot path" '[[ ! -e "$CACHE/compact-warned-s22" ]]'
 
-# --- T-23: end-to-end re-arm flow. Stale snap + small transcript + stale
-# flag -> fallback clears flag (composes with T-2 to cover post-/compact).
+# --- T-23: re-arm cycle. Phase 2 (stale snap + fallback clears flag) +
+# phase 3 (refreshed snapshot re-arms for the same sid after fallback).
+# Phase 1 dropped: duplicates T-21.
 cleanup
 make_transcript "$FIX/t23.jsonl" "$LINE_500K"
 read -r T23_MTIME T23_SIZE < <(get_transcript_meta "$FIX/t23.jsonl")
@@ -376,17 +377,39 @@ write_snapshot_raw "s23" 750000 "$T23_MTIME" "$T23_SIZE"
 : >"$CACHE/compact-warned-s23"
 make_transcript "$FIX/t23.jsonl" "$LINE_50K"
 OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s23","transcript_path":"'"$FIX/t23.jsonl"'"}')
-assert_eq "T-23: stale snap + small transcript -> silent" "" "$OUT"
-assert_true "T-23: stale flag cleared via fallback" '[[ ! -e "$CACHE/compact-warned-s23" ]]'
+assert_eq "T-23: phase 2 stale snap + small transcript -> silent" "" "$OUT"
+assert_true "T-23: phase 2 stale flag cleared via fallback" '[[ ! -e "$CACHE/compact-warned-s23" ]]'
+make_transcript "$FIX/t23.jsonl" "$LINE_500K"
+write_snapshot_for "s23" 750000 "$FIX/t23.jsonl"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s23","transcript_path":"'"$FIX/t23.jsonl"'"}')
+assert_true "T-23: phase 3 refreshed snap re-arms -> reports 750000" '[[ "$OUT" == *"750000"* ]]'
 
-# --- T-24: mtime_ns mismatch -> fallback. (Size mismatch is the same
-# branch via the Python `and`; not retested.)
+# --- T-24: mtime_ns mismatch -> fallback.
 cleanup
 make_transcript "$FIX/t24.jsonl" "$LINE_100K"
 read -r _ T24_SIZE < <(get_transcript_meta "$FIX/t24.jsonl")
 write_snapshot_raw "s24" 500000 "99999999999" "$T24_SIZE"
 OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s24","transcript_path":"'"$FIX/t24.jsonl"'"}')
 assert_eq "T-24: mtime mismatch -> fallback silent" "" "$OUT"
+
+# --- T-25: size mismatch -> fallback. Pairs with T-24 so an accidental
+# drop of either fingerprint field (size or mtime_ns) surfaces.
+cleanup
+make_transcript "$FIX/t25.jsonl" "$LINE_100K"
+read -r T25_MTIME _ < <(get_transcript_meta "$FIX/t25.jsonl")
+write_snapshot_raw "s25" 500000 "$T25_MTIME" "999"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s25","transcript_path":"'"$FIX/t25.jsonl"'"}')
+assert_eq "T-25: size mismatch -> fallback silent" "" "$OUT"
+
+# --- T-27: malformed snapshot JSON -> fallback. Defense against refactors
+# that might move parsing into a path where exceptions don't silently fall
+# through to the transcript scan.
+cleanup
+make_transcript "$FIX/t27.jsonl" "$LINE_100K"
+mkdir -p "$SNAP_DIR"
+printf '%s\n' '{not valid json' >"$SNAP_DIR/s27.json"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s27","transcript_path":"'"$FIX/t27.jsonl"'"}')
+assert_eq "T-27: malformed snapshot JSON -> fallback silent" "" "$OUT"
 
 # --- T-29b: bogus /c/... path -> silent, no crash (readability guard).
 cleanup
@@ -417,14 +440,19 @@ write_snapshot_raw "w3" 999999 "1" "1"
 run_writer "$(writer_stdin w3 "$FIX/w3.jsonl" '{"context_window_size":1000000,"used_percentage":null,"current_usage":null}')" >/dev/null
 assert_true "W-3: both sources null -> snapshot deleted" '[[ ! -f "$SNAP_DIR/w3.json" ]]'
 
-# --- W-4: traversal sid must hash, not escape SNAP_DIR.
+# --- W-4: safe_sid parity — the happy path (writer must use regex-valid
+# sids verbatim) AND the security path (traversal must hash, not escape).
+# Hook snapshot tests bypass the writer, so writer sid sanitization needs
+# its own coverage.
 cleanup
 make_transcript "$FIX/w4.jsonl" "$LINE_100K"
 W4_CW='{"context_window_size":1000,"used_percentage":10,"current_usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}'
+run_writer "$(writer_stdin w4-ok "$FIX/w4.jsonl" "$W4_CW")" >/dev/null
+assert_true "W-4a: regex-valid sid -> verbatim filename" '[[ -f "$SNAP_DIR/w4-ok.json" ]]'
 W4_EVIL='../../evil'
 W4_EVIL_SHA1=$("$PY" -c "import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest())" "$W4_EVIL")
 run_writer "$(writer_stdin "$W4_EVIL" "$FIX/w4.jsonl" "$W4_CW")" >/dev/null
-assert_true "W-4: traversal sid -> hashed filename, no escape" '[[ -f "$SNAP_DIR/$W4_EVIL_SHA1.json" ]] && [[ ! -e "$SNAP_DIR/../../evil.json" ]]'
+assert_true "W-4c: traversal sid -> hashed filename, no escape" '[[ -f "$SNAP_DIR/$W4_EVIL_SHA1.json" ]] && [[ ! -e "$SNAP_DIR/../../evil.json" ]]'
 
 # --- W-5 intentionally absent. Schema shape is enforced by the writer's
 # literal record dict; a shape regression would fail T-21/T-22/T-23 via
