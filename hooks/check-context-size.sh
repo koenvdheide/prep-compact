@@ -179,6 +179,6 @@ fi
 
 : >"$FLAG"
 
-printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user.\n' "$TOKENS" "$THRESHOLD"
+printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user. If you are at the very end of a todo list, you may finish the remaining items first before invoking the skill.\n' "$TOKENS" "$THRESHOLD"
 
 exit 0
