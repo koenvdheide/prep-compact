@@ -178,6 +178,7 @@ Behavior change: the reminder is now two-stage. The soft nudge is **informationa
 ### Rationale
 
 Two Codex red-team rounds shaped this release:
+
 - **Round 1** flagged that a single informational nudge regresses the emergency case (user close to context wall can't afford the extra round-trip of "user asks → skill runs → user runs /compact"). Two-stage preserves pure info-only default while keeping a zero-turn auto-invoke path for genuine emergencies.
 - **Round 2** flagged that prose-only gating ("Do NOT invoke the skill proactively") is best-effort prompt steering, not enforcement; that two independent flags cascade-clear wrong on threshold-raise; and that the `auto-compact imminent` phrasing overclaims the calibration. Fixes: canonical marker + SKILL self-gate (machine-readable anchor), single `last_emitted_level` state (correct by construction), softer wording.
 
