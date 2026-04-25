@@ -4,6 +4,12 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-04-25
+
+### Changed
+
+- **Reminder text** now permits finishing a near-complete todo list before invoking the `prep-compact` skill, so a threshold-crossing in mid-task no longer forces an interruption.
+
 ## [2.1.0] - 2026-04-23
 
 Skill-side refinement. Two additions to `SKILL.md`. No hook, config, or test changes.

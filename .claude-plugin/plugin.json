@@ -1,7 +1,7 @@
 {
   "name": "prep-compact",
   "description": "When your Claude Code session's real token count (summed input + cache_creation + cache_read from the newest main-chain .message.usage) crosses a configurable threshold (default 450K), a hook tells Claude to invoke the prep-compact skill. The skill surveys current state and emits a tailored /compact <instructions> mini-schema (goal/next/files/decisions/state) so the post-compact session resumes correctly.",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "author": {
     "name": "Koen van der Heide",
     "url": "https://github.com/koenvdheide"
