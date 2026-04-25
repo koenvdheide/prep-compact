@@ -4,6 +4,12 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-04-25
+
+### Changed
+
+- **Reminder text** now permits finishing a near-complete todo list before invoking the `prep-compact` skill, so a threshold-crossing in mid-task no longer forces an interruption.
+
 ## [2.2.0] - 2026-04-23
 
 Optional status-line accelerator. Additive opt-in: if the snapshot directory is empty (never configured, or freshly removed), hook behavior matches v2.1.0 exactly and all pre-existing assertions pass unchanged. A leftover fresh snapshot from a prior `statusLine`-configured session can change behavior on the very next user prompt; beyond that the transcript rewrites invalidate it and the fallback takes over.
