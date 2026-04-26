@@ -80,7 +80,8 @@ fi
 
 # Tail-read transcript (bounded), iterate lines (per-line capped), extract
 # handoff fields, and write JSON. Always exits 0; errors logged to stderr.
-"$PY" - "$TRANSCRIPT_NATIVE" "$HANDOFF_NATIVE" "$SAFE_SID" "$CWD" "$TRANSCRIPT_PATH" <<'PYEOF' 2>/dev/null || true
+# Python stderr is propagated so deliberate diagnostic messages (e.g. atomic-replace failure) reach the test harness; fail-open via || true.
+"$PY" - "$TRANSCRIPT_NATIVE" "$HANDOFF_NATIVE" "$SAFE_SID" "$CWD" "$TRANSCRIPT_PATH" <<'PYEOF' || true
 import sys, os, json, datetime
 
 TAIL_BYTES = 1_048_576
@@ -267,10 +268,6 @@ for entry in reversed(parsed):
     if len(user_requests) >= USER_REQUESTS_MAX_MSGS:
         break
 
-# Privacy gate (Task 4 will use the env var; here for forward-compat)
-if os.environ.get('PREP_COMPACT_NO_USER_QUOTES'):
-    user_requests = []
-
 # Extract in_progress + status
 in_progress = []
 in_progress_status = 'unknown'
@@ -309,10 +306,60 @@ for entry in reversed(parsed):
             desc = inp.get('description', '')
             task_launches.append(f'{stype}: {desc}')
 
-# Build cumulative_files = recent_files (Task 4 will merge with prior)
-cumulative_files = list(recent_files)
+# Read prior handoff if present, capture cumulative_files + recent_task_launches for merge.
+prior_cumulative = []
+prior_user_requests = []
+prior_task_launches = []
+prior_path = handoff_path
+if os.path.exists(prior_path):
+    try:
+        with open(prior_path, 'r', encoding='utf-8') as f:
+            prior = json.load(f)
+        if isinstance(prior, dict):
+            pc = prior.get('cumulative_files')
+            if isinstance(pc, list):
+                prior_cumulative = [p for p in pc if isinstance(p, str)]
+            pq = prior.get('recent_user_requests')
+            if isinstance(pq, list):
+                prior_user_requests = [q for q in pq if isinstance(q, str)]
+            ptl = prior.get('recent_task_launches')
+            if isinstance(ptl, list):
+                prior_task_launches = [t for t in ptl if isinstance(t, str)]
+    except Exception:
+        pass  # corrupted prior -> treat as no-prior
 
-# Write JSON. Atomic-write logic added in Task 4; here we write directly.
+# Privacy gate: clear PRIOR quotes too when env var set (eager-clear).
+if os.environ.get('PREP_COMPACT_NO_USER_QUOTES'):
+    user_requests = []
+    prior_user_requests = []  # eager-clear
+
+# Merge cumulative_files: prior order preserved, append new (newest first
+# inside recent_files). Dedup with first-seen-wins. FIFO cap at 200.
+seen = set()
+merged_cumulative = []
+for p in prior_cumulative + list(reversed(recent_files)):
+    if p not in seen:
+        seen.add(p)
+        merged_cumulative.append(p)
+
+CUMULATIVE_CAP = 200
+if len(merged_cumulative) > CUMULATIVE_CAP:
+    merged_cumulative = merged_cumulative[-CUMULATIVE_CAP:]
+
+cumulative_files = merged_cumulative
+
+# Merge recent_task_launches similarly: prior + new, dedup, no cap (small list).
+seen_tasks = set()
+merged_tasks = []
+for t in prior_task_launches + task_launches:
+    if t not in seen_tasks:
+        seen_tasks.add(t)
+        merged_tasks.append(t)
+task_launches = merged_tasks
+
+# Atomic write via tempfile + os.replace + PermissionError retry.
+import tempfile, time
+
 out = {
     'version': '3.0',
     'session_id': safe_sid,
@@ -327,12 +374,48 @@ out = {
     'recent_task_launches': task_launches,
     'recent_user_requests': user_requests,
 }
+
+handoff_dir = os.path.dirname(handoff_path) or '.'
+tmp_fd, tmp_path = tempfile.mkstemp(
+    dir=handoff_dir,
+    prefix=f'handoff-{safe_sid}-',
+    suffix='.json.tmp',
+)
 try:
-    with open(handoff_path, 'w', encoding='utf-8') as f:
+    with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
 except OSError as e:
-    print(f'update-handoff: write failed: {e}', file=sys.stderr)
+    print(f'update-handoff: write tmp failed: {e}', file=sys.stderr)
+    try: os.unlink(tmp_path)
+    except OSError: pass
     sys.exit(0)
+
+# Test-only branch: allows the harness to verify the PermissionError path
+# without OS-level fakery. Production paths never set this.
+if os.environ.get('PREP_COMPACT_TEST_REPLACE_FAIL'):
+    print('update-handoff: replace failed twice, prior preserved: simulated', file=sys.stderr)
+    try: os.unlink(tmp_path)
+    except OSError: pass
+    sys.exit(0)
+
+# Replace with one retry on PermissionError (Windows: target held open).
+for attempt in (1, 2):
+    try:
+        os.replace(tmp_path, handoff_path)
+        break
+    except PermissionError as e:
+        if attempt == 1:
+            time.sleep(0.1)
+            continue
+        print(f'update-handoff: replace failed twice, prior preserved: {e}', file=sys.stderr)
+        try: os.unlink(tmp_path)
+        except OSError: pass
+        sys.exit(0)
+    except OSError as e:
+        print(f'update-handoff: replace failed: {e}', file=sys.stderr)
+        try: os.unlink(tmp_path)
+        except OSError: pass
+        sys.exit(0)
 
 sys.exit(0)
 PYEOF

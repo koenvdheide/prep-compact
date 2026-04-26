@@ -90,7 +90,7 @@ fi
 #   After T4: EXPECTED_PASS=84, SKIPPED=39
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
-EXPECTED_PASS=72
+EXPECTED_PASS=84
 SKIPPED=0
 
 run_hook() {
@@ -515,8 +515,113 @@ HAS_BAR=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if '
 assert_eq "T-33: Tier-C dropped — /tmp/foo.log NOT in recent_files" "no" "$HAS_FOO"
 assert_eq "T-33: Tier-C dropped — /tmp/bar.txt NOT in recent_files" "no" "$HAS_BAR"
 
+# --- T-34: cumulative_files monotonic across two runs against different transcripts
+cleanup
+mkdir -p "$CACHE"
+cp "$FIX/handoff-prior.json" "$CACHE/handoff-s34.json"
+"$PY" -c "
+import json
+with open('$(to_native "$CACHE/handoff-s34.json")','r') as f: d=json.load(f)
+d['session_id']='s34'
+with open('$(to_native "$CACHE/handoff-s34.json")','w') as f: json.dump(d,f)
+"
+run_stop_hook '{"session_id":"s34","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s34.json")
+HAS_LEGACY=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'src/legacy/old.ts' in d['cumulative_files'] else 'no')")
+HAS_AUTH=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'src/auth.ts' in d['cumulative_files'] else 'no')")
+assert_eq "T-34: prior cumulative_files preserved (src/legacy/old.ts)" "yes" "$HAS_LEGACY"
+assert_eq "T-34: new path added (src/auth.ts)" "yes" "$HAS_AUTH"
+
+# --- T-34b: prior recent_task_launches preserved across runs
+cleanup
+"$PY" -c "
+import json
+prior = {'version':'3.0','session_id':'s34b','cwd':'/sample/cwd','transcript_path':'/x','transcript_mtime_at_write':0,'written_at':'2026-01-01T00:00:00Z','cumulative_files':[],'recent_files':[],'in_progress_status':'unknown','in_progress':[],'recent_task_launches':['Explore: prior unique launch'],'recent_user_requests':[]}
+with open('$(to_native "$CACHE/handoff-s34b.json")','w') as f: json.dump(prior, f)
+"
+run_stop_hook '{"session_id":"s34b","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s34b.json")
+HAS_PRIOR_TASK=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if any('prior unique launch' in t for t in d['recent_task_launches']) else 'no')")
+HAS_NEW_TASK=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if any('Explore: Find all callers' in t for t in d['recent_task_launches']) else 'no')")
+assert_eq "T-34b: prior recent_task_launches preserved" "yes" "$HAS_PRIOR_TASK"
+assert_eq "T-34b: new launches appended" "yes" "$HAS_NEW_TASK"
+
+# --- T-35: FIFO cap at 200 — older entries dropped first
+cleanup
+"$PY" -c "
+import json
+prior = {'version':'3.0','session_id':'s35','cwd':'/sample/cwd','transcript_path':'/x','transcript_mtime_at_write':0,'written_at':'2026-01-01T00:00:00Z','cumulative_files':[f'/old/path/{i:03d}.ts' for i in range(200)],'recent_files':[],'in_progress_status':'unknown','in_progress':[],'recent_task_launches':[],'recent_user_requests':[]}
+with open('$(to_native "$CACHE/handoff-s35.json")','w') as f: json.dump(prior, f)
+"
+run_stop_hook '{"session_id":"s35","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s35.json")
+N=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print(len(d['cumulative_files']))")
+HAS_FIRST_OLD=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if '/old/path/000.ts' in d['cumulative_files'] else 'no')")
+HAS_NEW=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'src/auth.ts' in d['cumulative_files'] else 'no')")
+assert_eq "T-35: cumulative_files capped at 200" "200" "$N"
+assert_eq "T-35: oldest entry evicted (/old/path/000.ts)" "no" "$HAS_FIRST_OLD"
+assert_eq "T-35: new entry kept (src/auth.ts)" "yes" "$HAS_NEW"
+
+# --- T-36: PREP_COMPACT_NO_USER_QUOTES=1 -> empty + eager-clear prior quotes
+cleanup
+"$PY" -c "
+import json
+prior = {'version':'3.0','session_id':'s36','cwd':'/sample/cwd','transcript_path':'/x','transcript_mtime_at_write':0,'written_at':'2026-01-01T00:00:00Z','cumulative_files':[],'recent_files':[],'in_progress_status':'unknown','in_progress':[],'recent_task_launches':[],'recent_user_requests':['old quote 1','old quote 2']}
+with open('$(to_native "$CACHE/handoff-s36.json")','w') as f: json.dump(prior, f)
+"
+PREP_COMPACT_NO_USER_QUOTES=1 run_stop_hook '{"session_id":"s36","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s36.json")
+N_REQ=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print(len(d['recent_user_requests']))")
+assert_eq "T-36: env var blanks recent_user_requests AND clears prior quotes" "0" "$N_REQ"
+
+# --- T-37: round-trip backticks/quotes/newlines verbatim
+cleanup
+FIX_ENV="$FIX" "$PY" -c "
+import json, os
+tricky = 'Has \`\`\`fences\`\`\` and \"quotes\" and\nnewlines\nand\ttabs'
+line = json.dumps({'message':{'role':'user','content':[{'type':'text','text':tricky}]}})
+with open(os.environ['FIX_ENV']+'/t37.jsonl','w') as f: f.write(line + '\n')
+"
+run_stop_hook '{"session_id":"s37","transcript_path":"'"$FIX/t37.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s37.json")
+ROUND_TRIP_OK=$("$PY" -c "
+import json
+d=json.load(open('$HANDOFF'))
+expected = 'Has \`\`\`fences\`\`\` and \"quotes\" and\nnewlines\nand\ttabs'
+print('yes' if d['recent_user_requests'][0] == expected else 'no')
+")
+assert_eq "T-37: backticks/quotes/newlines round-trip verbatim" "yes" "$ROUND_TRIP_OK"
+
+# --- T-38: atomic write — corrupted prior handoff treated as no-prior, write succeeds
+cleanup
+echo "{not valid json" > "$CACHE/handoff-s38.json"
+run_stop_hook '{"session_id":"s38","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s38.json")
+PARSE_OK=$("$PY" -c "
+import json
+try:
+    json.load(open('$HANDOFF'))
+    print('yes')
+except Exception:
+    print('no')
+")
+assert_eq "T-38: corrupted prior -> new write succeeds, parses cleanly" "yes" "$PARSE_OK"
+
+# --- T-38p: PermissionError simulation — prior file preserved, stderr warning
+cleanup
+"$PY" -c "
+import json
+prior = {'version':'3.0','session_id':'s38p','cwd':'/sample/cwd','transcript_path':'/x','transcript_mtime_at_write':0,'written_at':'2026-01-01T00:00:00Z','cumulative_files':['SENTINEL/prior.ts'],'recent_files':[],'in_progress_status':'unknown','in_progress':[],'recent_task_launches':[],'recent_user_requests':[]}
+with open('$(to_native "$CACHE/handoff-s38p.json")','w') as f: json.dump(prior, f)
+"
+ERR=$(PREP_COMPACT_TEST_REPLACE_FAIL=1 run_stop_hook_err '{"session_id":"s38p","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' 2>&1 >/dev/null)
+HANDOFF=$(to_native "$CACHE/handoff-s38p.json")
+PRIOR_INTACT=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'SENTINEL/prior.ts' in d.get('cumulative_files',[]) else 'no')")
+assert_eq "T-38p: simulated replace fail -> prior preserved (sentinel intact)" "yes" "$PRIOR_INTACT"
+assert_true "T-38p: stderr warning printed on simulated fail" '[[ "$ERR" == *"replace failed twice, prior preserved"* ]]'
+
 else
-  SKIPPED=27
+  SKIPPED=39
 fi  # STOP_FIXTURE_OK
 
 # --- Final guard: false-green blocker
