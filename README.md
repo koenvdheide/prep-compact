@@ -10,9 +10,17 @@ A Claude Code plugin that nudges Claude to prepare tailored `/compact` instructi
 
 CC does not programatically expose how many tokens are in use for the current session (even though we can see ourselves with /context), so there is no direct way to fire a reminder based on the current session's token use. However, CC does store how many tokens are in use at the moment of a given user prompt in its transcript file. This plugin works by firing a hook to read the tail end of this transcript file, parse the stated token usage and compare it to a set threshold. Under the hood it works like this:
 
-> A `UserPromptSubmit` hook fires on every prompt submission. It tail-reads the last 256 KB of your session transcript `.jsonl`, parses the newest main-chain (`role=='assistant'`, non-sidechain, non-api-error) `.message.usage`, and sums `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. When that total crosses `CLAUDE_CONTEXT_WARN_TOKENS` (default `450000`), a one-shot reminder tells Claude to invoke the `prep-compact` skill. The skill surveys the session in four buckets (goal+next, source-of-truth files, decisions+constraints+blockers, execution state) and emits a copy-paste `/compact <mini-schema>` block preserving what the post-compact session needs to resume correctly.
+> A `UserPromptSubmit` hook fires on every prompt submission. It tail-reads the last 256 KB of your session transcript `.jsonl`, parses the newest main-chain (`role=='assistant'`, non-sidechain, non-api-error) `.message.usage`, and sums `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. When that total crosses `CLAUDE_CONTEXT_WARN_TOKENS` (default `450000`), an informational reminder names the warm handoff path and points the user at `/prep-compact:prep-compact`. The skill reads the warm handoff (extractive fields: cumulative file paths, recent user-message quotes, in-progress todos, recent Task launches) and adds an analytical layer (decisions, constraints, blockers, verb-anchored next-step) to emit a copy-paste `/compact <mini-schema>` block preserving what the post-compact session needs to resume correctly.
 
 The reminder fires once per threshold-crossing. Once the token count drops back below the threshold (after you `/compact`), the flag is auto-cleared on the next turn and future crossings re-arm cleanly. You can also invoke `/prep-compact` manually at any time to refresh the draft right before running `/compact`.
+
+### What's new in v3.0
+
+Between turns, a Stop hook tail-reads the transcript and writes a continuously-updated handoff file at `${CLAUDE_PLUGIN_DATA}/handoff-<sid>.json`. The handoff lists every file the session has touched (cumulative across `/compact` cycles), the most recent user requests quoted verbatim, in-progress todo items, and any active subagent launches. When you run `/prep-compact:prep-compact`, the skill reads this warm file and adds an analytical layer (decisions, constraints, blockers, verb-anchored next-step) — no fresh survey needed. The threshold reminder is now informational; it names the handoff path rather than telling Claude to auto-invoke the skill.
+
+## Honest scope
+
+prep-compact does not replace Claude Code's `/compact` algorithm. Claude Code still owns compaction and may summarize, paraphrase, or omit any instructions passed in. The warm handoff file is durable local source material so `/prep-compact` can generate better `/compact <instructions>`. This is pi-inspired sidecar ergonomics; it does not provide runtime-level verbatim tail retention, non-destructive history navigation, or pi-style `firstKeptEntryId` boundary semantics. If you want those, run [Codex CLI](https://github.com/openai/codex) or [pi-mono](https://github.com/badlogic/pi-mono) — different tools for different runtimes.
 
 ## Install
 
@@ -55,8 +63,8 @@ See [PRIVACY.md](PRIVACY.md) for the full statement.
 ## Known limits
 
 - **Undocumented transcript format.** The hook parses `.message.usage` from the transcript `.jsonl`, which Anthropic doesn't officially document. Silent no-op if the schema changes.
-- **Auto-invoke is prompt-layer.** The reminder tells Claude to invoke the skill; that's best-effort prompt steering. If the skill doesn't auto-run, type `/prep-compact` manually.
-- **Staleness after work.** If you keep working for several turns after the reminder fires, the drafted `/compact` block will be stale by compact-time. Re-invoke `/prep-compact` right before running `/compact` to refresh.
+- **Manual invocation.** The reminder is informational — it names the warm handoff path and points at `/prep-compact:prep-compact`. Claude does not auto-invoke the skill; type `/prep-compact` manually when you're ready to compact.
+- **Staleness across turns.** The Stop hook refreshes the warm handoff after every assistant message, so `/prep-compact` reads current state. If the conversation has been idle and the handoff has been updated since the last user prompt, the draft will reflect that. There's a one-turn window of stale handoff right after `/compact` runs (UserPromptSubmit fires before the next Stop), but the next assistant turn refreshes it.
 
 ## License
 

@@ -1,0 +1,12 @@
+{"message":{"role":"user","content":[{"type":"text","text":"Help me refactor src/auth.ts to use the new session API. Reference src/session.ts and tests/auth.test.ts."}]}}
+{"message":{"role":"assistant","content":[{"type":"text","text":"I'll start by reading the files."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"src/auth.ts"}}],"usage":{"input_tokens":1000,"cache_creation_input_tokens":50000,"cache_read_input_tokens":0}}}
+{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"export function login() { /* old impl */ }"}]}}
+{"message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Read","input":{"file_path":"src/session.ts"}}],"usage":{"input_tokens":1100,"cache_creation_input_tokens":52000,"cache_read_input_tokens":1000}}}
+{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"export class Session { /* ... */ }"}]}}
+{"message":{"role":"user","content":[{"type":"text","text":"Make sure tests still pass. Run `npm test` after."}]}}
+{"message":{"role":"assistant","content":[{"type":"tool_use","id":"t3","name":"Edit","input":{"file_path":"src/auth.ts","old_string":"old impl","new_string":"new impl"}}],"usage":{"input_tokens":1200,"cache_creation_input_tokens":53000,"cache_read_input_tokens":2000}}}
+{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","content":"Edit applied"}]}}
+{"message":{"role":"assistant","content":[{"type":"tool_use","id":"t4","name":"TodoWrite","input":{"todos":[{"content":"Refactor src/auth.ts","status":"completed","activeForm":"Refactoring auth"},{"content":"Run npm test","status":"in_progress","activeForm":"Running tests"},{"content":"Update tests/auth.test.ts","status":"pending","activeForm":"Updating tests"}]}}],"usage":{"input_tokens":1300,"cache_creation_input_tokens":54000,"cache_read_input_tokens":3000}}}
+{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4","content":"Todos updated"}]}}
+{"message":{"role":"assistant","content":[{"type":"tool_use","id":"t5","name":"Task","input":{"subagent_type":"Explore","description":"Find all callers of login()","prompt":"Search the repo for login() callers."}}],"usage":{"input_tokens":1400,"cache_creation_input_tokens":55000,"cache_read_input_tokens":4000}}}
+{"message":{"role":"user","content":[{"type":"text","text":"Important: do NOT change the public signature of login()."}]}}

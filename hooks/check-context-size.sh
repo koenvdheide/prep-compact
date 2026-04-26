@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook for prep-compact v2.0.0.
+# UserPromptSubmit hook for prep-compact v3.0.
 # Tail-scans the session transcript (last 256 KB) for the newest main-chain
 # assistant .message.usage block. When the sum of input_tokens +
 # cache_creation_input_tokens + cache_read_input_tokens exceeds
-# CLAUDE_CONTEXT_WARN_TOKENS, emits a one-shot reminder telling Claude to
-# invoke the prep-compact skill. Always exits 0 (fail-open).
+# CLAUDE_CONTEXT_WARN_TOKENS, emits an informational reminder. If the warm
+# handoff file exists at $CACHE_DIR/handoff-$SAFE_SID.json (maintained by the
+# Stop hook in update-handoff.sh), the reminder names its path and tells the
+# user to run /prep-compact:prep-compact when ready. Otherwise the reminder
+# falls back to a shorter copy that just names the skill. Always exits 0
+# (fail-open).
 #
 # Main-chain filter: role == 'assistant', isSidechain != true,
 # isApiErrorMessage != true. input_tokens required; cache fields default to 0.
@@ -152,6 +156,11 @@ fi
 
 : >"$FLAG"
 
-printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user. If you are at the very end of a todo list, you may finish the remaining items first before invoking the skill.\n' "$TOKENS" "$THRESHOLD"
+HANDOFF_PATH="$CACHE_DIR/handoff-$SAFE_SID.json"
+if [[ -e "$HANDOFF_PATH" ]]; then
+  printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). The on-disk handoff at %s is current. When the user is ready to compact, run /prep-compact:prep-compact to add the analytical layer (decisions, constraints, blockers, verb-anchored next-step) and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first.\n' "$TOKENS" "$THRESHOLD" "$HANDOFF_PATH"
+else
+  printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). Run /prep-compact:prep-compact to survey current state and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first.\n' "$TOKENS" "$THRESHOLD"
+fi
 
 exit 0

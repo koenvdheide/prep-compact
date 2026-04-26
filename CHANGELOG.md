@@ -4,6 +4,42 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-04-26
+
+Adds a Stop hook maintaining a continuously-fresh on-disk handoff. UserPromptSubmit reminder becomes informational. Skill reads warm handoff plus a targeted analytical pass — no fresh full survey when the handoff is current. Four Codex review rounds shaped the design.
+
+### Why
+
+User feedback: Claude Code's auto-compact feels worse than Codex CLI's despite the larger Opus 1M window. Faster + better continuity + less interruption is the user goal. Research (Codex CLI + pi-mono) clarified that most "smoothness" is runtime-owned, but a sidecar can deliver three concrete wins: (a) less ceremony at the threshold, (b) always-prepared handoff, (c) better-anchored resume material.
+
+### Added
+
+- **Stop hook** (`hooks/update-handoff.sh`) — runs after each assistant message; tail-reads the transcript with bounded buffer + per-line cap; extracts file paths (Tier-A: Read/Edit/Write/NotebookEdit; Tier-B: Glob/Grep paths in tool inputs and result-block content); recent user-message quotes (capped 5 / 20000 chars); in-progress todos; recent Task launches; merges with prior handoff; FIFO-evicts at 200-path cap; writes JSON atomically via `tempfile.mkstemp` + `os.replace` with `PermissionError` retry.
+- **`handoff-<safe_sid>.json`** (new per-session file under `${CLAUDE_PLUGIN_DATA}`) with documented schema.
+- **`PREP_COMPACT_NO_USER_QUOTES=1`** opt-out env var. When set: hook writes empty `recent_user_requests` AND eager-clears any pre-existing quotes from prior handoff during merge.
+- **T-0 fixture gate** (`stop-real.json`): harness skips Stop-hook tests with explicit message if missing (local dev), hard-fails if malformed, hard-fails any skip when `$CI` is set.
+
+### Changed
+
+- **Reminder copy** (UserPromptSubmit): no longer says "Invoke the prep-compact skill." Two informational variants: handoff-aware (names the on-disk path) and no-handoff (legacy short copy).
+- **`prep-compact` skill** repurposed: discovers warm handoff via newest-mtime-matching-cwd; uses extractive fields directly; performs targeted current-conversation pass for analytical fields with concrete per-field source priorities and `unknown` fallbacks.
+- **PRIVACY.md** broadened to describe new persistence scope, opt-out, eager-clear behavior, and Anthropic flow during `/compact`.
+
+### Removed
+
+- Auto-invoke skill steering from threshold reminder.
+- Hook-side `goal` heuristic (violated extractive/analytical split — moved to skill).
+
+### Rationale
+
+Four Codex review rounds (compare-decide vs pi-mono; red-team r2 on draft v1; red-team r3 on draft v2; red-team r4 on draft v3) shaped this design. Codex r3 forced the format switch to pure JSON (eliminated YAML/Markdown escape and fence-breakage classes), FIFO eviction simplification, dropping "warm-but-trailing" as a user-visible signal, eager-clear privacy semantics, and concrete analytical-pass recipe. Codex r4 produced one targeted patch (T-0 gate behavior on malformed fixture and CI strictness) and recommended stopping the review cycle.
+
+### Breaking
+
+- Reminder copy is user-visible; downstream code that screen-scrapes the literal "Invoke the prep-compact skill" string will break. Use the new informational variants.
+- Skill behavior is user-visible; skill output is now sometimes prefixed with a "no warm handoff matched cwd" note when the fallback path runs.
+- New on-disk file format under `${CLAUDE_PLUGIN_DATA}/handoff-<sid>.json`. Plugin uninstall + reinstall is the clean path.
+
 ## [2.1.1] - 2026-04-25
 
 ### Changed
