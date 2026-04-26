@@ -90,7 +90,7 @@ fi
 #   After T4: EXPECTED_PASS=84, SKIPPED=39
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
-EXPECTED_PASS=84
+EXPECTED_PASS=87
 SKIPPED=0
 
 run_hook() {
@@ -159,6 +159,8 @@ OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s1","transcript
 assert_true "T-1: above threshold -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
 assert_true "T-1: message names tokens not bytes" '[[ "$OUT" == *"tokens"* ]] && [[ "$OUT" != *"bytes"* ]]'
 assert_true "T-1: flag file written" '[[ -e "$CACHE/compact-warned-s1" ]]'
+# T-1 additional regression: reminder must NOT use the v2.x "Invoke the prep-compact skill" directive
+assert_true "T-1: reminder NO longer says 'Invoke the prep-compact skill' (v3 informational)" '[[ "$OUT" != *"Invoke the prep-compact skill"* ]]'
 
 # --- T-2: token count below threshold with stale flag -> silent + flag cleared
 cleanup
@@ -335,6 +337,20 @@ assert_true "T-20: step 2 flag cleared by below-threshold branch" '[[ ! -e "$CAC
 OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s20","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
 assert_true "T-20: step 3 re-arm fires reminder" '[[ "$OUT" == *"prep-compact"* ]]'
 assert_true "T-20: step 3 flag re-set" '[[ -e "$CACHE/compact-warned-s20" ]]'
+
+# --- T-39: reminder when handoff exists -> verbatim full string equality
+cleanup
+HANDOFF_PATH_T39="$CACHE/handoff-s39.json"
+echo '{"version":"3.0"}' > "$HANDOFF_PATH_T39"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"s39","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
+EXPECTED_T39="Session context is approximately 250000 tokens (above configured threshold of 1 tokens). The on-disk handoff at $HANDOFF_PATH_T39 is current. When the user is ready to compact, run /prep-compact:prep-compact to add the analytical layer (decisions, constraints, blockers, verb-anchored next-step) and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first."
+assert_eq "T-39: handoff-present reminder verbatim" "$EXPECTED_T39" "$OUT"
+
+# --- T-40: reminder when handoff missing -> verbatim no-handoff variant
+cleanup
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"s40","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
+EXPECTED_T40="Session context is approximately 250000 tokens (above configured threshold of 1 tokens). Run /prep-compact:prep-compact to survey current state and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first."
+assert_eq "T-40: handoff-missing reminder verbatim" "$EXPECTED_T40" "$OUT"
 
 # Stop-hook tests below depend on the Task-1 T-0 gate. Skip if gate failed.
 if (( STOP_FIXTURE_OK == 1 )); then

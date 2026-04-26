@@ -152,6 +152,11 @@ fi
 
 : >"$FLAG"
 
-printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). Invoke the prep-compact skill to generate a tailored /compact <instructions> command for the user. If you are at the very end of a todo list, you may finish the remaining items first before invoking the skill.\n' "$TOKENS" "$THRESHOLD"
+HANDOFF_PATH="$CACHE_DIR/handoff-$SAFE_SID.json"
+if [[ -e "$HANDOFF_PATH" ]]; then
+  printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). The on-disk handoff at %s is current. When the user is ready to compact, run /prep-compact:prep-compact to add the analytical layer (decisions, constraints, blockers, verb-anchored next-step) and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first.\n' "$TOKENS" "$THRESHOLD" "$HANDOFF_PATH"
+else
+  printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). Run /prep-compact:prep-compact to survey current state and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first.\n' "$TOKENS" "$THRESHOLD"
+fi
 
 exit 0
