@@ -90,7 +90,7 @@ fi
 #   After T4: EXPECTED_PASS=84, SKIPPED=39
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
-EXPECTED_PASS=87
+EXPECTED_PASS=88
 SKIPPED=0
 
 run_hook() {
@@ -351,6 +351,10 @@ cleanup
 OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"s40","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
 EXPECTED_T40="Session context is approximately 250000 tokens (above configured threshold of 1 tokens). Run /prep-compact:prep-compact to survey current state and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first."
 assert_eq "T-40: handoff-missing reminder verbatim" "$EXPECTED_T40" "$OUT"
+
+# --- T-41: SKILL.md mentions discovery via newest-mtime + cwd matching
+SKILL="$SCRIPT_DIR/../skills/prep-compact/SKILL.md"
+assert_true "T-41: SKILL.md mentions newest-mtime discovery" '[[ "$(cat "$SKILL")" == *"newest"*"mtime"* || "$(cat "$SKILL")" == *"highest"*"mtime"* ]]'
 
 # Stop-hook tests below depend on the Task-1 T-0 gate. Skip if gate failed.
 if (( STOP_FIXTURE_OK == 1 )); then
