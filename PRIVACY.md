@@ -1,42 +1,52 @@
 # Privacy
 
-prep-compact is a local-only Claude Code plugin. It does not send data over the network, does not use telemetry, and does not record session content.
+prep-compact runs entirely on your machine. The plugin makes no network calls of its own. The Anthropic API is only contacted when you (the user) run `/prep-compact` or `/compact` through Claude Code's normal flow.
 
-## What the plugin accesses
+## Local persistence
 
-The `UserPromptSubmit` hook receives a JSON payload on stdin from Claude Code. The plugin reads two fields from that payload:
+The plugin writes two kinds of files under `${CLAUDE_PLUGIN_DATA}` (default `~/.claude/cache/` if unset):
 
-- `session_id` — used to namespace the per-session state file.
-- `transcript_path` — used to stat the transcript file and to tail-read the last 256 KB. The tail is parsed to extract API-returned `.message.usage` numbers (specifically `input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` from the newest main-chain assistant turn). No transcript content is persisted, logged, or transmitted.
+- **`compact-warned-<safe_sid>`** — empty presence marker for the threshold reminder (one per session). No content recorded.
+- **`handoff-<safe_sid>.json`** (new in v3.0) — the warm handoff. Contents:
+  - `cumulative_files`, `recent_files` — file paths the session has touched (extracted from `Read`/`Edit`/`Write`/`NotebookEdit`/`Glob`/`Grep` tool calls). No file CONTENT, only paths.
+  - `in_progress`, `recent_task_launches` — your todo state and subagent launches, extracted from `TodoWrite`/`Task` tool calls.
+  - **`recent_user_requests`** — verbatim quotes of your most recent user messages (capped at 5 messages OR 20000 chars). This is the most sensitive field; it is the only place the plugin stores raw text from your prompts.
+  - `version`, `session_id`, `cwd`, `transcript_path`, `transcript_mtime_at_write`, `written_at` — bookkeeping metadata.
 
-`session_id` is validated against `^[A-Za-z0-9_-]{1,64}$` before use as a filename. Values that don't match fall back to a SHA-1 hex hash of the raw value, so unexpected characters cannot escape the cache directory.
+The hook NEVER reads or persists tool result CONTENT (file contents, command outputs, etc.). It scans tool calls for paths and todo state only.
 
-## What the plugin persists
+## Opting out of user-quote persistence
 
-The hook writes one small file under `$CLAUDE_PLUGIN_DATA` (or `~/.claude/cache` as a fallback), per session:
+Set `PREP_COMPACT_NO_USER_QUOTES=1` in your shell profile or `~/.claude/settings.json` under `env`:
 
-- `compact-warned-<session_id>` — an empty flag file used as a presence marker to avoid re-firing the reminder for the same threshold-crossing.
+```json
+{
+  "env": {
+    "PREP_COMPACT_NO_USER_QUOTES": "1"
+  }
+}
+```
 
-The file contains no prompts, responses, tool calls, project file paths, or any session content.
+When set:
 
-(v1.0.x also wrote a `compact-baseline-<session_id>` integer file used by the since-removed byte-path. If any such file is left over on disk, it is unread by v2.0.0 and can be deleted safely.)
+1. The Stop hook writes empty `recent_user_requests` going forward.
+2. **Eager-clear**: the Stop hook also drops any pre-existing `recent_user_requests` from the prior handoff during merge. You do not need to delete the handoff manually — the next assistant turn will overwrite with no quotes.
 
-## What the plugin does not do
+## Network and Anthropic flow
 
-- No network requests, ever.
-- No telemetry, analytics, or usage reporting.
-- No writes outside the cache directory.
-- No full-transcript reads. Only the last 256 KB is read, and only to extract `.message.usage` integer fields — no prompt/response content is parsed or retained.
-- No modifications to your project files, shell environment, or Claude Code settings.
+- The Stop hook and UserPromptSubmit hook make no network calls.
+- The plugin's skill (`/prep-compact`) runs as part of your Claude Code session and uses the same Anthropic API path Claude Code itself uses. Inputs to the skill (including any quoted user messages from the warm handoff) flow through that path.
+- When you run the emitted `/compact <instructions>` block, the contents — including any quoted user-message excerpts embedded in the block — are sent to Claude Code's normal Anthropic compaction pipeline. They are subject to whatever data-handling terms apply to your Anthropic account.
 
-## About the /compact output
+## Session ID safety
 
-The skill drafts a `/compact <instructions>` block. You paste and run it yourself. When you do, the instructions text is sent to Anthropic as part of Claude Code's normal `/compact` flow — the same as any other `/compact` invocation you run by hand. That transmission is governed by Anthropic's privacy policy, not this plugin.
+`session_id` is validated with regex `^[A-Za-z0-9_-]{1,64}$` before use as a filename component. Exotic values are SHA-1-hashed to prevent path-escape via `../` or absolute paths.
 
-## Third parties
+## Uninstall
 
-None. The plugin has no external dependencies at runtime beyond your local shell (bash + coreutils) and Python 3.
+Plugin uninstall via `/plugin uninstall` removes the plugin and (per Claude Code's standard plugin lifecycle) clears `${CLAUDE_PLUGIN_DATA}`. To preserve the data dir, use `/plugin uninstall --keep-data`.
 
-## Contact
+## See also
 
-Issues or questions: <https://github.com/koenvdheide/prep-compact/issues>
+- [README.md](README.md) — feature overview and configuration.
+- [LICENSE](LICENSE) — MIT.
