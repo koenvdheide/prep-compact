@@ -14,6 +14,12 @@ for fx in transcript-usage.jsonl transcript-malformed-tail.jsonl ups-real.json; 
     cp "$SCRIPT_DIR/fixtures/$fx" "$TEST_DIR/fixtures/$fx"
   fi
 done
+# v3 fixtures
+for fx in stop-real.json transcript-handoff-multi-turn.jsonl transcript-handoff-no-user-text.jsonl transcript-handoff-tool-blob.jsonl transcript-handoff-oversized-line.jsonl handoff-prior.json; do
+  if [[ -f "$SCRIPT_DIR/fixtures/$fx" ]]; then
+    cp "$SCRIPT_DIR/fixtures/$fx" "$TEST_DIR/fixtures/$fx"
+  fi
+done
 FIX="$TEST_DIR/fixtures"
 
 # Sandboxed HOME so the hook's ~/.claude/cache expansion lands INSIDE the
@@ -24,9 +30,6 @@ mkdir -p "$CACHE"
 
 FAIL=0
 PASS=0
-# EXPECTED_PASS MUST equal the exact count of assert_eq + assert_true calls.
-# Tally (T-1..T-20): 3+2+2+2+2+2+2+1+1+1+2+2+2+1+8+2+2+1+1+6 = 45
-EXPECTED_PASS=45
 
 # Python resolution: mirror the hook. Tests invoke python for fixture
 # generation and SHA-1 hashing.
@@ -38,6 +41,57 @@ else
   printf 'run-tests: Python 3 not found on PATH (tried python3 and python).\n' >&2
   exit 1
 fi
+
+# --- T-0: real-fixture gate. Codex r4 mandate.
+# Stop-hook tests require a captured Stop event payload to ensure schema parity.
+# - Missing fixture: skip Stop-hook tests with explicit message (local dev only).
+# - Malformed fixture (parse fail OR missing required keys): hard-fail.
+# - $CI set: any skip is treated as a failure.
+# NOTE: stop-real.json shipped is synthetic (matches Claude Code hook schema).
+# Replace with a real captured payload before claiming Stop-hook coverage in CI.
+STOP_FIXTURE_OK=0
+STOP_FIXTURE_REASON=""
+if [[ -f "$FIX/stop-real.json" ]]; then
+  # Pipe via stdin (not path arg) so MSYS paths don't reach Windows Python.
+  if "$PY" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception as e:
+    print(f'parse-fail: {e}', file=sys.stderr); sys.exit(2)
+required = {'session_id','transcript_path','cwd','permission_mode','hook_event_name'}
+missing = required - set(d.keys())
+if missing:
+    print(f'missing-keys: {sorted(missing)}', file=sys.stderr); sys.exit(2)
+if d.get('hook_event_name') != 'Stop':
+    print(f'wrong-event: {d.get(\"hook_event_name\")!r}', file=sys.stderr); sys.exit(2)
+" <"$FIX/stop-real.json" 2>/dev/null; then
+    STOP_FIXTURE_OK=1
+  else
+    printf 'FAIL: T-0 stop-real.json present but malformed\n' >&2
+    exit 2
+  fi
+else
+  STOP_FIXTURE_REASON="missing test/fixtures/stop-real.json — capture from a live session before claiming Stop-hook coverage"
+  if [[ -n "${CI:-}" ]]; then
+    printf 'FAIL: T-0 in CI: %s\n' "$STOP_FIXTURE_REASON" >&2
+    exit 2
+  fi
+  printf 'SKIP: T-0 gate: %s\n' "$STOP_FIXTURE_REASON" >&2
+fi
+
+# EXPECTED_PASS is the count of assertions expected to PASS for the harness as
+# it currently stands. SKIPPED tracks Stop-dep assertions skipped due to missing
+# fixture. False-green guard at end requires PASS + SKIPPED == EXPECTED_PASS.
+# Per-task targets (advisory; Task 11 recounts authoritatively):
+#   After T1: EXPECTED_PASS=45, SKIPPED=0    (this task — only adds the gate)
+#   After T2: EXPECTED_PASS=52, SKIPPED=7    (when fixture missing)
+#   After T3: EXPECTED_PASS=72, SKIPPED=27
+#   After T4: EXPECTED_PASS=84, SKIPPED=39
+#   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
+#   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
+EXPECTED_PASS=45
+SKIPPED=0
 
 run_hook() {
   local stdin=$1; shift
@@ -270,8 +324,8 @@ assert_true "T-20: step 3 re-arm fires reminder" '[[ "$OUT" == *"prep-compact"* 
 assert_true "T-20: step 3 flag re-set" '[[ -e "$CACHE/compact-warned-s20" ]]'
 
 # --- Final guard: false-green blocker
-if (( PASS != EXPECTED_PASS )); then
-  printf 'FAIL: expected %d assertions to pass, got %d (PASS) + %d (FAIL)\n' "$EXPECTED_PASS" "$PASS" "$FAIL" >&2
+if (( PASS + SKIPPED != EXPECTED_PASS )); then
+  printf 'FAIL: expected %d (got PASS=%d + SKIPPED=%d, FAIL=%d)\n' "$EXPECTED_PASS" "$PASS" "$SKIPPED" "$FAIL" >&2
   exit 1
 fi
 
