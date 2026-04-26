@@ -90,7 +90,7 @@ fi
 #   After T4: EXPECTED_PASS=84, SKIPPED=39
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
-EXPECTED_PASS=52
+EXPECTED_PASS=72
 SKIPPED=0
 
 run_hook() {
@@ -138,6 +138,19 @@ make_transcript() {
   for line in "$@"; do
     printf '%s\n' "$line" >>"$path"
   done
+}
+
+# Helper: convert MSYS path -> mixed-form Windows path (forward slashes,
+# drive letter prefix) so the harness's Windows-native Python can open files
+# written under sandbox $HOME, AND the resulting string is safe to embed in
+# Python code (no backslash-escape pitfalls like "\U..."). cygpath -m yields
+# e.g. "C:/Users/.../handoff.json". No-op on Linux/macOS.
+to_native() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1" 2>/dev/null || printf '%s' "$1"
+  else
+    printf '%s' "$1"
+  fi
 }
 
 # --- T-1: token count above threshold -> reminder fires with token message
@@ -372,8 +385,138 @@ OUT=$(run_stop_hook '{"session_id":"s26","transcript_path":"'"$FIX/transcript-ha
 EXIT=$(printf '%s' '{"session_id":"s26","transcript_path":"'"$FIX/transcript-handoff-oversized-line.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' | HOME="$SANDBOX_HOME" bash "$STOP_HOOK" 2>/dev/null; echo "exit=$?")
 assert_true "T-26: oversized line -> exit 0 (skipped, fail-open)" '[[ "$EXIT" == *"exit=0"* ]]'
 
+# --- T-26b: malformed JSONL line MID-transcript -> hook skips bad line, processes valid lines
+cleanup
+FIX_ENV="$FIX" "$PY" -c "
+import json, os
+good1 = json.dumps({'message':{'role':'user','content':[{'type':'text','text':'first valid'}]}})
+bad = '{not-valid json line'
+good2 = json.dumps({'message':{'role':'user','content':[{'type':'text','text':'second valid'}]}})
+with open(os.environ['FIX_ENV']+'/t26b.jsonl','w') as f:
+    f.write(good1+'\n'+bad+'\n'+good2+'\n')
+"
+run_stop_hook '{"session_id":"s26b","transcript_path":"'"$FIX/t26b.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s26b.json")
+HAS_BOTH=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); r=d.get('recent_user_requests',[]); print('yes' if any('first valid' in q for q in r) and any('second valid' in q for q in r) else 'no')")
+assert_eq "T-26b: malformed mid-line skipped, good lines processed" "yes" "$HAS_BOTH"
+
+# --- T-27: multi-turn fixture -> handoff written, parseable JSON, all keys present
+cleanup
+run_stop_hook '{"session_id":"s27","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s27.json")
+assert_true "T-27: handoff file written" '[[ -e "$HANDOFF" ]]'
+assert_true "T-27: handoff parses as JSON with required keys" "$PY -c 'import json,sys; d=json.load(open(\"$HANDOFF\")); req={\"version\",\"session_id\",\"cwd\",\"transcript_path\",\"transcript_mtime_at_write\",\"written_at\",\"cumulative_files\",\"recent_files\",\"in_progress_status\",\"in_progress\",\"recent_task_launches\",\"recent_user_requests\"}; missing = req - set(d.keys()); sys.exit(0 if not missing else 1)'"
+
+# --- T-28: recent_files contains Tier-A paths from Read/Edit, NOT user-text mentions
+cleanup
+run_stop_hook '{"session_id":"s28","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s28.json")
+HAS_AUTH=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'src/auth.ts' in d['recent_files'] else 'no')")
+HAS_SESSION=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'src/session.ts' in d['recent_files'] else 'no')")
+HAS_TESTS=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'tests/auth.test.ts' in d['recent_files'] else 'no')")
+assert_eq "T-28: recent_files has src/auth.ts (Tier-A)" "yes" "$HAS_AUTH"
+assert_eq "T-28: recent_files has src/session.ts (Tier-A)" "yes" "$HAS_SESSION"
+assert_eq "T-28: recent_files does NOT have tests/auth.test.ts (only in user text, no tool call)" "no" "$HAS_TESTS"
+
+# --- T-28b: Tier-B Glob result extraction — paths in tool_result of a Glob tool_use end up in recent_files
+cleanup
+FIX_ENV="$FIX" "$PY" -c "
+import json, os
+turns = [
+    {'message':{'role':'assistant','content':[{'type':'tool_use','id':'g1','name':'Glob','input':{'pattern':'src/**/*.ts'}}],'usage':{'input_tokens':100,'cache_creation_input_tokens':1000,'cache_read_input_tokens':0}}},
+    {'message':{'role':'user','content':[{'type':'tool_result','tool_use_id':'g1','content':'src/found/a.ts\nsrc/found/b.ts\nnot-a-path-line\n'}]}},
+    {'message':{'role':'assistant','content':[{'type':'tool_use','id':'gr1','name':'Grep','input':{'pattern':'foo','output_mode':'content'}}],'usage':{'input_tokens':100,'cache_creation_input_tokens':1000,'cache_read_input_tokens':0}}},
+    {'message':{'role':'user','content':[{'type':'tool_result','tool_use_id':'gr1','content':[{'type':'text','text':'src/match/c.ts:42:foo\nsrc/match/d.ts:13:foo\n'}]}]}},
+]
+with open(os.environ['FIX_ENV']+'/t28b.jsonl','w') as f:
+    for t in turns: f.write(json.dumps(t)+'\n')
+"
+run_stop_hook '{"session_id":"s28b","transcript_path":"'"$FIX/t28b.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s28b.json")
+HAS_GLOB_A=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'src/found/a.ts' in d['recent_files'] else 'no')")
+HAS_GREP_C=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'src/match/c.ts' in d['recent_files'] else 'no')")
+HAS_NOT_PATH=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'not-a-path-line' in d['recent_files'] else 'no')")
+assert_eq "T-28b: Glob result path extracted (src/found/a.ts)" "yes" "$HAS_GLOB_A"
+assert_eq "T-28b: Grep result path extracted (path:line:match -> path only)" "yes" "$HAS_GREP_C"
+assert_eq "T-28b: non-path-shaped line dropped" "no" "$HAS_NOT_PATH"
+
+# --- T-29: recent_user_requests skips tool_result blocks; includes text blocks
+cleanup
+run_stop_hook '{"session_id":"s29","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s29.json")
+HAS_TR=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if any('Edit applied' in r for r in d['recent_user_requests']) else 'no')")
+HAS_PUB=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if any('do NOT change the public signature' in r for r in d['recent_user_requests']) else 'no')")
+assert_eq "T-29: recent_user_requests SKIPS tool_result content" "no" "$HAS_TR"
+assert_eq "T-29: recent_user_requests INCLUDES text content" "yes" "$HAS_PUB"
+
+# --- T-30: in_progress_status known + in_progress contains the active todo
+cleanup
+run_stop_hook '{"session_id":"s30","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s30.json")
+STATUS=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print(d['in_progress_status'])")
+HAS_NPM=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if any('Run npm test' in t for t in d['in_progress']) else 'no')")
+assert_eq "T-30: in_progress_status == known" "known" "$STATUS"
+assert_eq "T-30: in_progress contains 'Run npm test'" "yes" "$HAS_NPM"
+
+# --- T-31: recent_task_launches contains rendered subagent_type+description
+cleanup
+run_stop_hook '{"session_id":"s31","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s31.json")
+HAS_TASK=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if any('Explore: Find all callers' in t for t in d['recent_task_launches']) else 'no')")
+assert_eq "T-31: recent_task_launches has Explore launch" "yes" "$HAS_TASK"
+
+# --- T-32: no-user-text fixture -> recent_user_requests empty, in_progress_status unknown
+cleanup
+run_stop_hook '{"session_id":"s32","transcript_path":"'"$FIX/transcript-handoff-no-user-text.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s32.json")
+N_REQ=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print(len(d['recent_user_requests']))")
+STATUS=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print(d['in_progress_status'])")
+assert_eq "T-32: recent_user_requests empty" "0" "$N_REQ"
+assert_eq "T-32: in_progress_status unknown when no TodoWrite" "unknown" "$STATUS"
+
+# --- T-32cap: recent_user_requests cap-boundary (5-message AND char cap)
+cleanup
+FIX_ENV="$FIX" "$PY" -c "
+import json, os
+msgs = [
+    {'message':{'role':'user','content':[{'type':'text','text':f'msg-{i:02d} short content here under 50 chars'}]}}
+    for i in range(1, 8)
+]
+with open(os.environ['FIX_ENV']+'/t32cap.jsonl','w') as f:
+    for m in msgs: f.write(json.dumps(m)+'\n')
+"
+run_stop_hook '{"session_id":"s32cap","transcript_path":"'"$FIX/t32cap.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s32cap.json")
+N_MSG=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print(len(d['recent_user_requests']))")
+assert_eq "T-32cap: 5-message cap (7 in transcript -> 5 in handoff)" "5" "$N_MSG"
+
+cleanup
+FIX_ENV="$FIX" "$PY" -c "
+import json, os
+huge = 'x' * 25000
+msgs = [
+    {'message':{'role':'user','content':[{'type':'text','text':'short first'}]}},
+    {'message':{'role':'user','content':[{'type':'text','text':huge}]}},
+]
+with open(os.environ['FIX_ENV']+'/t32cap2.jsonl','w') as f:
+    for m in msgs: f.write(json.dumps(m)+'\n')
+"
+run_stop_hook '{"session_id":"s32cap2","transcript_path":"'"$FIX/t32cap2.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s32cap2.json")
+HAS_HUGE=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); r=d.get('recent_user_requests',[]); total = sum(len(q) for q in r); print('yes' if total > 20000 else 'no')")
+assert_eq "T-32cap: char-cap respected (total chars NOT over 20000)" "no" "$HAS_HUGE"
+
+# --- T-33: tool-blob fixture -> path-shaped strings inside huge tool_result NOT in recent_files
+cleanup
+run_stop_hook '{"session_id":"s33","transcript_path":"'"$FIX/transcript-handoff-tool-blob.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s33.json")
+HAS_FOO=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if '/tmp/foo.log' in d['recent_files'] else 'no')")
+HAS_BAR=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if '/tmp/bar.txt' in d['recent_files'] else 'no')")
+assert_eq "T-33: Tier-C dropped — /tmp/foo.log NOT in recent_files" "no" "$HAS_FOO"
+assert_eq "T-33: Tier-C dropped — /tmp/bar.txt NOT in recent_files" "no" "$HAS_BAR"
+
 else
-  SKIPPED=7
+  SKIPPED=27
 fi  # STOP_FIXTURE_OK
 
 # --- Final guard: false-green blocker
