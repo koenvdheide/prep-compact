@@ -18,9 +18,6 @@ CC does not programatically expose how many tokens are in use for the current se
 
 The reminder fires once per threshold-crossing. Once the token count drops back below the threshold (after you `/compact`), the flag is auto-cleared on the next turn and future crossings re-arm cleanly. You can also invoke `/prep-compact` manually at any time to refresh the draft right before running `/compact`.
 
-## Honest scope
-
-prep-compact does not replace Claude Code's `/compact` algorithm. Claude Code still owns compaction and may summarize, paraphrase, or omit any instructions passed in. The warm handoff file is durable local source material so `/prep-compact` can generate better `/compact <instructions>` — it doesn't provide runtime-level guarantees about what gets preserved.
 
 ## Install
 
