@@ -3,10 +3,14 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/check-context-size.sh\""
-          }
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/check-context-size.sh\"" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/update-handoff.sh\"" }
         ]
       }
     ]
