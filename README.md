@@ -14,6 +14,14 @@ CC does not programatically expose how many tokens are in use for the current se
 
 The reminder fires once per threshold-crossing. Once the token count drops back below the threshold (after you `/compact`), the flag is auto-cleared on the next turn and future crossings re-arm cleanly. You can also invoke `/prep-compact` manually at any time to refresh the draft right before running `/compact`.
 
+### What's new in v3.0
+
+Between turns, a Stop hook tail-reads the transcript and writes a continuously-updated handoff file at `${CLAUDE_PLUGIN_DATA}/handoff-<sid>.json`. The handoff lists every file the session has touched (cumulative across `/compact` cycles), the most recent user requests quoted verbatim, in-progress todo items, and any active subagent launches. When you run `/prep-compact:prep-compact`, the skill reads this warm file and adds an analytical layer (decisions, constraints, blockers, verb-anchored next-step) — no fresh survey needed. The threshold reminder is now informational; it names the handoff path rather than telling Claude to auto-invoke the skill.
+
+## Honest scope
+
+prep-compact does not replace Claude Code's `/compact` algorithm. Claude Code still owns compaction and may summarize, paraphrase, or omit any instructions passed in. The warm handoff file is durable local source material so `/prep-compact` can generate better `/compact <instructions>`. This is pi-inspired sidecar ergonomics; it does not provide runtime-level verbatim tail retention, non-destructive history navigation, or pi-style `firstKeptEntryId` boundary semantics. If you want those, run [Codex CLI](https://github.com/openai/codex) or [pi-mono](https://github.com/badlogic/pi-mono) — different tools for different runtimes.
+
 ## Install
 
 ```bash
