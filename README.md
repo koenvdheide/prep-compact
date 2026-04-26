@@ -21,9 +21,11 @@ The reminder fires once per threshold-crossing. Once the token count drops back 
 
 ## Install
 
-```bash
-git clone https://github.com/koenvdheide/prep-compact.git
-claude --plugin-dir /path/to/prep-compact
+Add the `agent-tools` marketplace and install the plugin:
+
+```text
+/plugin marketplace add koenvdheide/agent-tools
+/plugin install prep-compact@agent-tools
 ```
 
 Run `/reload-plugins` if you installed mid-session.
