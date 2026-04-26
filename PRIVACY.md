@@ -13,7 +13,7 @@ The plugin writes two kinds of files under `${CLAUDE_PLUGIN_DATA}` (default `~/.
   - **`recent_user_requests`** — verbatim quotes of your most recent user messages (capped at 5 messages OR 20000 chars). This is the most sensitive field; it is the only place the plugin stores raw text from your prompts.
   - `version`, `session_id`, `cwd`, `transcript_path`, `transcript_mtime_at_write`, `written_at` — bookkeeping metadata.
 
-The hook NEVER reads or persists tool result CONTENT (file contents, command outputs, etc.). It scans tool calls for paths and todo state only.
+The hook does NOT persist tool result content. It performs a bounded read (≤2000 chars per result) of `Glob` and `Grep` `tool_result` blocks for the sole purpose of extracting path tokens that appear in their output — only the extracted path strings end up in the handoff, never the result text itself. It does NOT read or scan `Read`/`Edit`/`Write` tool results, `Bash` command output, or any other tool result content.
 
 ## Opting out of user-quote persistence
 

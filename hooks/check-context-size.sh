@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook for prep-compact v2.0.0.
+# UserPromptSubmit hook for prep-compact v3.0.
 # Tail-scans the session transcript (last 256 KB) for the newest main-chain
 # assistant .message.usage block. When the sum of input_tokens +
 # cache_creation_input_tokens + cache_read_input_tokens exceeds
-# CLAUDE_CONTEXT_WARN_TOKENS, emits a one-shot reminder telling Claude to
-# invoke the prep-compact skill. Always exits 0 (fail-open).
+# CLAUDE_CONTEXT_WARN_TOKENS, emits an informational reminder. If the warm
+# handoff file exists at $CACHE_DIR/handoff-$SAFE_SID.json (maintained by the
+# Stop hook in update-handoff.sh), the reminder names its path and tells the
+# user to run /prep-compact:prep-compact when ready. Otherwise the reminder
+# falls back to a shorter copy that just names the skill. Always exits 0
+# (fail-open).
 #
 # Main-chain filter: role == 'assistant', isSidechain != true,
 # isApiErrorMessage != true. input_tokens required; cache fields default to 0.
