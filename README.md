@@ -63,8 +63,8 @@ See [PRIVACY.md](PRIVACY.md) for the full statement.
 ## Known limits
 
 - **Undocumented transcript format.** The hook parses `.message.usage` from the transcript `.jsonl`, which Anthropic doesn't officially document. Silent no-op if the schema changes.
-- **Auto-invoke is prompt-layer.** The reminder tells Claude to invoke the skill; that's best-effort prompt steering. If the skill doesn't auto-run, type `/prep-compact` manually.
-- **Staleness after work.** If you keep working for several turns after the reminder fires, the drafted `/compact` block will be stale by compact-time. Re-invoke `/prep-compact` right before running `/compact` to refresh.
+- **Manual invocation.** The reminder is informational — it names the warm handoff path and points at `/prep-compact:prep-compact`. Claude does not auto-invoke the skill; type `/prep-compact` manually when you're ready to compact.
+- **Staleness across turns.** The Stop hook refreshes the warm handoff after every assistant message, so `/prep-compact` reads current state. If the conversation has been idle and the handoff has been updated since the last user prompt, the draft will reflect that. There's a one-turn window of stale handoff right after `/compact` runs (UserPromptSubmit fires before the next Stop), but the next assistant turn refreshes it.
 
 ## License
 
