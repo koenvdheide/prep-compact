@@ -90,7 +90,7 @@ fi
 #   After T4: EXPECTED_PASS=84, SKIPPED=39
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
-EXPECTED_PASS=45
+EXPECTED_PASS=52
 SKIPPED=0
 
 run_hook() {
@@ -322,6 +322,59 @@ assert_true "T-20: step 2 flag cleared by below-threshold branch" '[[ ! -e "$CAC
 OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s20","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
 assert_true "T-20: step 3 re-arm fires reminder" '[[ "$OUT" == *"prep-compact"* ]]'
 assert_true "T-20: step 3 flag re-set" '[[ -e "$CACHE/compact-warned-s20" ]]'
+
+# Stop-hook tests below depend on the Task-1 T-0 gate. Skip if gate failed.
+if (( STOP_FIXTURE_OK == 1 )); then
+
+STOP_HOOK="$SCRIPT_DIR/../hooks/update-handoff.sh"
+
+run_stop_hook() {
+  local stdin=$1; shift
+  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" bash "$STOP_HOOK" "$@" 2>/dev/null
+}
+run_stop_hook_err() {
+  local stdin=$1; shift
+  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" bash "$STOP_HOOK" "$@"
+}
+
+# --- T-21: missing transcript_path -> fail-open silent
+cleanup
+OUT=$(run_stop_hook '{"session_id":"s21","transcript_path":"/nonexistent/foo.jsonl","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}')
+assert_eq "T-21: missing transcript -> silent" "" "$OUT"
+EXIT=$(printf '%s' '{"session_id":"s21","transcript_path":"/nonexistent/foo.jsonl","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' | HOME="$SANDBOX_HOME" bash "$STOP_HOOK" 2>/dev/null; echo "exit=$?")
+assert_true "T-21: missing transcript -> exit 0 (fail-open)" '[[ "$EXIT" == *"exit=0"* ]]'
+
+# --- T-22: empty stdin -> fail-open silent
+cleanup
+OUT=$(run_stop_hook '' 2>/dev/null)
+assert_eq "T-22: empty stdin -> silent" "" "$OUT"
+
+# --- T-23: malformed stdin -> fail-open silent
+cleanup
+OUT=$(run_stop_hook '{not valid' 2>/dev/null)
+assert_eq "T-23: malformed stdin -> silent" "" "$OUT"
+
+# --- T-24: oversized session_id -> SHA-1 fallback (no escaped path)
+cleanup
+LONG=$(printf 'b%.0s' {1..200})
+OUT=$(run_stop_hook "{\"session_id\":\"$LONG\",\"transcript_path\":\"$FIX/transcript-handoff-multi-turn.jsonl\",\"cwd\":\"/x\",\"permission_mode\":\"default\",\"hook_event_name\":\"Stop\"}")
+assert_true "T-24: oversized sid -> raw name NOT used" '[[ ! -e "$CACHE/handoff-$LONG.json" ]]'
+
+# --- T-25: path traversal session_id -> no escape
+cleanup
+OUT=$(run_stop_hook '{"session_id":"../../evil","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' 2>/dev/null)
+ESCAPED=$(find "$SANDBOX_HOME/.claude" -path "$CACHE" -prune -o -name 'handoff-*.json' -print 2>/dev/null | head -n 1)
+assert_eq "T-25: path traversal -> no escaped handoff" "" "$ESCAPED"
+
+# --- T-26: oversized single line in transcript -> not OOM, fail-open silent
+cleanup
+OUT=$(run_stop_hook '{"session_id":"s26","transcript_path":"'"$FIX/transcript-handoff-oversized-line.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}')
+EXIT=$(printf '%s' '{"session_id":"s26","transcript_path":"'"$FIX/transcript-handoff-oversized-line.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' | HOME="$SANDBOX_HOME" bash "$STOP_HOOK" 2>/dev/null; echo "exit=$?")
+assert_true "T-26: oversized line -> exit 0 (skipped, fail-open)" '[[ "$EXIT" == *"exit=0"* ]]'
+
+else
+  SKIPPED=7
+fi  # STOP_FIXTURE_OK
 
 # --- Final guard: false-green blocker
 if (( PASS + SKIPPED != EXPECTED_PASS )); then
