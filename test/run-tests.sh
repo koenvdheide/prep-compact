@@ -90,7 +90,8 @@ fi
 #   After T4: EXPECTED_PASS=84, SKIPPED=39
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
-EXPECTED_PASS=88
+#   PR-comment fix: +3 Stop-dep (T-32cap +1 short-still-captured, T-32prior +2)
+EXPECTED_PASS=91
 SKIPPED=0
 
 run_hook() {
@@ -525,6 +526,26 @@ run_stop_hook '{"session_id":"s32cap2","transcript_path":"'"$FIX/t32cap2.jsonl"'
 HANDOFF=$(to_native "$CACHE/handoff-s32cap2.json")
 HAS_HUGE=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); r=d.get('recent_user_requests',[]); total = sum(len(q) for q in r); print('yes' if total > 20000 else 'no')")
 assert_eq "T-32cap: char-cap respected (total chars NOT over 20000)" "no" "$HAS_HUGE"
+# Codex PR-comment fix: oversized message should be SKIPPED, not abort the loop. Older shorter msg should still be captured.
+HAS_SHORT=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); r=d.get('recent_user_requests',[]); print('yes' if any('short first' in q for q in r) else 'no')")
+assert_eq "T-32cap: oversized newest skipped, older 'short first' still captured" "yes" "$HAS_SHORT"
+
+# --- T-32prior: prior handoff user_requests preserved when current tail has no user text
+# Codex PR-comment fix: prior_user_requests must be merged so a turn with no user text in tail
+# does not drop captured intent.
+cleanup
+"$PY" -c "
+import json
+prior = {'version':'3.0','session_id':'s32prior','cwd':'/sample/cwd','transcript_path':'/x','transcript_mtime_at_write':0,'written_at':'2026-01-01T00:00:00Z','cumulative_files':[],'recent_files':[],'in_progress_status':'unknown','in_progress':[],'recent_task_launches':[],'recent_user_requests':['prior intent A','prior intent B']}
+with open('$(to_native "$CACHE/handoff-s32prior.json")','w') as f: json.dump(prior, f)
+"
+# Run against the no-user-text fixture (only assistant + tool_result, no user-text blocks).
+run_stop_hook '{"session_id":"s32prior","transcript_path":"'"$FIX/transcript-handoff-no-user-text.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s32prior.json")
+HAS_PRIOR_A=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'prior intent A' in d.get('recent_user_requests',[]) else 'no')")
+HAS_PRIOR_B=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'prior intent B' in d.get('recent_user_requests',[]) else 'no')")
+assert_eq "T-32prior: prior user_requests A preserved when current tail has no user text" "yes" "$HAS_PRIOR_A"
+assert_eq "T-32prior: prior user_requests B preserved when current tail has no user text" "yes" "$HAS_PRIOR_B"
 
 # --- T-33: tool-blob fixture -> path-shaped strings inside huge tool_result NOT in recent_files
 cleanup
@@ -641,7 +662,7 @@ assert_eq "T-38p: simulated replace fail -> prior preserved (sentinel intact)" "
 assert_true "T-38p: stderr warning printed on simulated fail" '[[ "$ERR" == *"replace failed twice, prior preserved"* ]]'
 
 else
-  SKIPPED=39
+  SKIPPED=42
 fi  # STOP_FIXTURE_OK
 
 # --- Final guard: false-green blocker

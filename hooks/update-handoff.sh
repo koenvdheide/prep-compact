@@ -241,7 +241,9 @@ for entry in reversed(parsed):
 
 recent_files = recent_files_seen
 
-# Extract recent_user_requests
+# Extract recent_user_requests. Codex PR-comment fix: skip oversized messages
+# instead of breaking — one large prompt should NOT empty the whole field when
+# older shorter messages still fit.
 user_requests = []
 total_chars = 0
 for entry in reversed(parsed):
@@ -261,8 +263,10 @@ for entry in reversed(parsed):
     if not text_chunks:
         continue
     combined = '\n'.join(text_chunks)
+    if len(combined) > USER_REQUESTS_MAX_CHARS:
+        continue  # oversized single message — skip, keep walking for shorter ones
     if total_chars + len(combined) > USER_REQUESTS_MAX_CHARS:
-        break
+        continue  # would exceed cap with this addition — try older smaller msgs
     user_requests.append(combined)
     total_chars += len(combined)
     if len(user_requests) >= USER_REQUESTS_MAX_MSGS:
@@ -356,6 +360,30 @@ for t in prior_task_launches + task_launches:
         seen_tasks.add(t)
         merged_tasks.append(t)
 task_launches = merged_tasks
+
+# Merge recent_user_requests with prior handoff. Codex PR-comment fix: when the
+# current 1MB tail has no user text (long assistant/tool-output streak), prior
+# captured intent must NOT be dropped. Order: current (newer) first, prior
+# (older) after; dedup; oversized single quotes skipped; total chars capped.
+# When PREP_COMPACT_NO_USER_QUOTES is set, both lists were already emptied.
+seen_quotes = set()
+merged_quotes = []
+total_quote_chars = 0
+for q in user_requests + prior_user_requests:
+    if not isinstance(q, str) or not q:
+        continue
+    if q in seen_quotes:
+        continue
+    if len(q) > USER_REQUESTS_MAX_CHARS:
+        continue
+    if total_quote_chars + len(q) > USER_REQUESTS_MAX_CHARS:
+        continue
+    if len(merged_quotes) >= USER_REQUESTS_MAX_MSGS:
+        break
+    seen_quotes.add(q)
+    merged_quotes.append(q)
+    total_quote_chars += len(q)
+user_requests = merged_quotes
 
 # Atomic write via tempfile + os.replace + PermissionError retry.
 import tempfile, time
