@@ -2,7 +2,9 @@
 
 ## Why
 
-Claude Code's auto-compact misses important details and runs late in the 1M Opus context window. Context is usually already degrading by the time it fires, and the default summary it generates is pretty iffy. It often doesn't save which files, decisions, or blockers you wanted preserved, and it forgets what subagents were running. A second compaction in the same session has no memory of anything that happened before the first. Running `/compact <instructions>` with a tailored prompt gives dramatically cleaner resumption, but requires you to remember to do it and design the prompt. This plugin nags you at the right moment and drafts the tailored prompt for you. It presents an up to date tailored prompt by keeping a small running record on disk between turns (that records which files you've touched, what you've been asked to do, which subagents are active) and folds that into every draft, so the resumed session carries forward state from the *whole* session, not just what was still in memory at the moment of compaction.
+Claude Code's auto-compact misses important details and runs late in the 1M Opus context window. Context is usually already degrading by the time it fires, and the default summary it generates is pretty iffy. It often doesn't save which files, decisions, or blockers you wanted preserved, and it forgets what subagents were running. A second compaction in the same session has no memory of anything that happened before the first. Running `/compact <instructions>` with a tailored prompt gives dramatically cleaner resumption, but requires you to remember to do it and design the prompt. 
+
+This plugin nags you at the right moment and drafts the tailored prompt for you. It presents an up to date tailored prompt by keeping a small running record on disk between turns (that records which files you've touched, what you've been asked to do, which subagents are active) and folds that into every draft, so the resumed session carries forward state from the *whole* session, not just what was still in memory at the moment of compaction.
 
 ## How It Works
 
