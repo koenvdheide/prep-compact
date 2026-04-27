@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook for prep-compact v3.0.
-# Tail-scans the session transcript (last 256 KB) for the newest main-chain
-# assistant .message.usage block. When the sum of input_tokens +
-# cache_creation_input_tokens + cache_read_input_tokens exceeds
-# CLAUDE_CONTEXT_WARN_TOKENS, emits an informational reminder. If the warm
-# handoff file exists at $CACHE_DIR/handoff-$SAFE_SID.json (maintained by the
-# Stop hook in update-handoff.sh), the reminder names its path and tells the
-# user to run /prep-compact:prep-compact when ready. Otherwise the reminder
+# UserPromptSubmit hook for prep-compact v3.1.
+# Resolves the current session token count and emits a one-shot informational
+# reminder when it crosses CLAUDE_CONTEXT_WARN_TOKENS. Two token sources, in
+# order: (1) an optional fresh snapshot at
+# $HOME/.claude/cache/prep-compact-snapshots/$SAFE_SID.json written by the
+# companion statusLine script (scripts/write_context_snapshot.py) — used when
+# its transcript fingerprint (mtime_ns + size) matches the live transcript;
+# (2) tail-scan of the last 256 KB of the transcript .jsonl for the newest
+# main-chain assistant .message.usage, summing input_tokens +
+# cache_creation_input_tokens + cache_read_input_tokens. The reminder names
+# the warm handoff path at $CACHE_DIR/handoff-$SAFE_SID.json (maintained by
+# the Stop hook in update-handoff.sh) when present; otherwise the reminder
 # falls back to a shorter copy that just names the skill. Always exits 0
 # (fail-open).
 #
@@ -88,8 +92,31 @@ else
   TRANSCRIPT_NATIVE="$TRANSCRIPT_PATH"
 fi
 
-# Tail-scan the transcript for the newest main-chain assistant .message.usage.
-# Prints the summed token count or nothing. Defensive at every layer.
+# Snapshot fast path (v3.1.0 opt-in statusLine companion writes
+# ~/.claude/cache/prep-compact-snapshots/<safe_sid>.json). Use it when
+# transcript mtime_ns+size match; else fall through to the tail-scan below.
+TOKENS=$(PREP_COMPACT_SAFE_SID="$SAFE_SID" PREP_COMPACT_TRANSCRIPT_NATIVE="$TRANSCRIPT_NATIVE" "$PY" -c '
+import os, json
+safe_sid = os.environ.get("PREP_COMPACT_SAFE_SID", "")
+transcript = os.environ.get("PREP_COMPACT_TRANSCRIPT_NATIVE", "")
+if not safe_sid or not transcript:
+    raise SystemExit(0)
+snap_path = os.path.join(os.path.expanduser("~"), ".claude", "cache", "prep-compact-snapshots", safe_sid + ".json")
+try:
+    with open(snap_path, "r", encoding="utf-8") as f:
+        snap = json.load(f)
+    st = os.stat(transcript)
+    if (snap.get("transcript_mtime_ns") == st.st_mtime_ns
+        and snap.get("transcript_size") == st.st_size):
+        print(snap.get("current_context_tokens", ""))
+except Exception:
+    pass
+' 2>/dev/null)
+
+# If the snapshot branch did not yield a usable count, run the transcript
+# tail-scan: the newest main-chain assistant .message.usage. Prints the
+# summed token count or nothing. Defensive at every layer.
+if [[ -z "$TOKENS" || ! "$TOKENS" =~ ^[0-9]+$ ]]; then
 TOKENS=$(printf '%s' "$TRANSCRIPT_NATIVE" | "$PY" -c "
 import sys, json, os
 
@@ -136,10 +163,11 @@ for line in reversed(tail.splitlines()):
     print(it + cc + cr)
     sys.exit(0)
 " 2>/dev/null)
+fi
 
 if [[ -z "$TOKENS" || ! "$TOKENS" =~ ^[0-9]+$ ]]; then
-  # No usable usage in tail — silent no-op (pre-first-turn, parse errors,
-  # schema drift, oversized-straddle, etc.).
+  # No usable token count from either path — silent no-op (pre-first-turn,
+  # parse errors, schema drift, oversized-straddle, etc.).
   exit 0
 fi
 

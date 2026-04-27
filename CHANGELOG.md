@@ -4,6 +4,31 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-04-27
+
+Optional status-line accelerator for the threshold check. Additive: with no `statusLine` configured (or no leftover snapshot present), `UserPromptSubmit` behavior matches v3.0.0 exactly and all pre-existing assertions pass unchanged.
+
+### Added
+
+- **Status-line companion writer** (`scripts/write_context_snapshot.py`). Reads Claude Code's status-line JSON, derives the current context token count from `context_window.current_usage` (input + cache_creation + cache_read; output excluded) — falling back to `round(used_percentage / 100 * context_window_size)` when `current_usage` is null — and writes a three-integer snapshot (`current_context_tokens`, `transcript_mtime_ns`, `transcript_size`) at `~/.claude/cache/prep-compact-snapshots/<safe_sid>.json`. Atomic write via `tempfile.mkstemp` + `os.replace`. Opt-in via a `statusLine` entry in `~/.claude/settings.json` (see README).
+- **Snapshot fast path in the `UserPromptSubmit` hook.** Before the existing transcript tail-scan, the hook now consults the snapshot and uses its pre-computed token count when the snapshot's `transcript_mtime_ns` and `transcript_size` match the live transcript's current stat. Fingerprint mismatch falls through to the existing scan with zero behavior change.
+- **15 new assertions.** 10 snapshot integration tests (T-42..T-48: above- and below-threshold impossible-output proofs that the fast path was used, two-phase re-arm cycle, mtime/size mismatches, malformed JSON) plus 5 writer-script tests (W-1..W-4: token math for both waterfall paths, null-source stale-snapshot deletion, `safe_sid` parity). EXPECTED_PASS: 91 → 106.
+
+### Changed
+
+- **Test harness** sandboxes `USERPROFILE` alongside `HOME` so Python's `expanduser('~')` redirects cleanly on Windows-native python.exe (uses `USERPROFILE`, not `HOME`).
+- **`PRIVACY.md`** extended to enumerate the snapshot file's three integer fields.
+
+### Accepted limitations
+
+- **Terminal Claude Code only.** Status-line renders drive the writer reliably in the CLI TUI; IDE extensions (VSCode, JetBrains) may not render status lines mid-session, in which case the plugin silently falls back to the transcript parser — identical to v3.0.0 behavior.
+- **Settings changes need restart.** Mid-session `statusLine` additions do not hot-reload in Claude Code.
+- **Same-path same-size same-mtime in-place rewrites** can theoretically mask stale snapshots, but Claude Code's append-only transcripts and size-changing `/compact` make this practically unreachable.
+
+### Rationale
+
+Three Codex red-team rounds plus a live spike converged on a minimal three-integer schema (no `transcript_path` field — Git Bash vs Windows path-form normalization is a correctness hazard, mtime+size is a sufficient per-session freshness gate; no `schema` version field; no shared `_safe_sid.py` helper module — 5 lines duplicated inline in writer and hook). Two follow-up simplification rounds plus a test-cut review trimmed the test suite to its load-bearing core: drop tests that compose with pre-existing T-1..T-20 to cover their case (T-25 size-mismatch and T-23 phase-3 re-arm restored after Codex flagged them as not-actually-redundant).
+
 ## [3.0.0] - 2026-04-26
 
 Adds a Stop hook maintaining a continuously-fresh on-disk handoff. UserPromptSubmit reminder becomes informational. Skill reads warm handoff plus a targeted analytical pass — no fresh full survey when the handoff is current. Four Codex review rounds shaped the design.

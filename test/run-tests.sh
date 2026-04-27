@@ -91,12 +91,14 @@ fi
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
 #   PR-comment fix: +3 Stop-dep (T-32cap +1 short-still-captured, T-32prior +2)
-EXPECTED_PASS=91
+#   v3.1.0 snapshot: +15 (T-42(2)+T-43(2)+T-44(2)+T-45(1)+T-46(1)+T-47(1)+T-48(1)
+#                         + W-1(1)+W-2(1)+W-3(1)+W-4(2))
+EXPECTED_PASS=106
 SKIPPED=0
 
 run_hook() {
   local stdin=$1; shift
-  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" bash "$HOOK" "$@" 2>/dev/null
+  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" USERPROFILE="$SANDBOX_HOME" bash "$HOOK" "$@" 2>/dev/null
 }
 
 # Variant that preserves stderr so tests can capture warn messages. T-14 and
@@ -104,7 +106,7 @@ run_hook() {
 # expected-silent tests clean.
 run_hook_err() {
   local stdin=$1; shift
-  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" bash "$HOOK" "$@"
+  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" USERPROFILE="$SANDBOX_HOME" bash "$HOOK" "$@"
 }
 
 assert_eq() {
@@ -152,6 +154,59 @@ to_native() {
   else
     printf '%s' "$1"
   fi
+}
+
+# --- v3.1.0 snapshot fast-path helpers ---------------------------------------
+# Writer + hook compute the snapshot path via os.path.expanduser('~'), so we
+# override both HOME (POSIX) and USERPROFILE (Windows) when invoking Python
+# from the harness so expanduser lands inside SANDBOX_HOME.
+SNAP_DIR="$SANDBOX_HOME/.claude/cache/prep-compact-snapshots"
+WRITER="$SCRIPT_DIR/../scripts/write_context_snapshot.py"
+
+snap_python() {
+  HOME="$SANDBOX_HOME" USERPROFILE="$SANDBOX_HOME" "$PY" "$@"
+}
+
+# Emit "mtime_ns size" (one line) for a transcript file.
+get_transcript_meta() {
+  "$PY" -c 'import os,sys; s=os.stat(sys.argv[1]); print(s.st_mtime_ns, s.st_size)' "$(to_native "$1")"
+}
+
+write_snapshot_raw() {
+  local safe_sid=$1 tokens=$2 mtime_ns=$3 size=$4
+  mkdir -p "$SNAP_DIR"
+  "$PY" -c '
+import json, sys
+d = {"current_context_tokens": int(sys.argv[1]),
+     "transcript_mtime_ns":    int(sys.argv[2]),
+     "transcript_size":        int(sys.argv[3])}
+with open(sys.argv[4], "w", encoding="utf-8") as f: json.dump(d, f)
+' "$tokens" "$mtime_ns" "$size" "$SNAP_DIR/$safe_sid.json"
+}
+
+write_snapshot_for() {
+  local safe_sid=$1 tokens=$2 transcript=$3 mtime size
+  read -r mtime size < <(get_transcript_meta "$transcript")
+  write_snapshot_raw "$safe_sid" "$tokens" "$mtime" "$size"
+}
+
+read_snapshot_field() {
+  snap_python -c '
+import json, os, sys
+p = os.path.join(os.path.expanduser("~"), ".claude", "cache", "prep-compact-snapshots", sys.argv[1]+".json")
+try:
+    with open(p) as f: d = json.load(f)
+    print(d.get(sys.argv[2], ""))
+except Exception: pass
+' "$1" "$2" 2>/dev/null
+}
+
+run_writer() {
+  printf '%s' "$1" | snap_python "$WRITER" 2>/dev/null
+}
+
+writer_stdin() {
+  printf '{"session_id":"%s","transcript_path":"%s","context_window":%s}' "$1" "$2" "$3"
 }
 
 # --- T-1: token count above threshold -> reminder fires with token message
@@ -356,6 +411,107 @@ assert_eq "T-40: handoff-missing reminder verbatim" "$EXPECTED_T40" "$OUT"
 # --- T-41: SKILL.md mentions discovery via newest-mtime + cwd matching
 SKILL="$SCRIPT_DIR/../skills/prep-compact/SKILL.md"
 assert_true "T-41: SKILL.md mentions newest-mtime discovery" '[[ "$(cat "$SKILL")" == *"newest"*"mtime"* || "$(cat "$SKILL")" == *"highest"*"mtime"* ]]'
+
+# --- v3.1.0 snapshot fast-path integration tests (T-42..T-48) ---------------
+LINE_100K='{"message":{"role":"assistant","usage":{"input_tokens":50000,"cache_creation_input_tokens":50000,"cache_read_input_tokens":0}}}'
+LINE_500K='{"message":{"role":"assistant","usage":{"input_tokens":250000,"cache_creation_input_tokens":250000,"cache_read_input_tokens":0}}}'
+LINE_50K='{"message":{"role":"assistant","usage":{"input_tokens":5,"cache_creation_input_tokens":50000,"cache_read_input_tokens":0}}}'
+
+# --- T-42: snap=500k + transcript=100k + threshold=200k -> reminder reports
+# 500k (transcript fallback would be silent -> fast path proven).
+cleanup
+make_transcript "$FIX/t42.jsonl" "$LINE_100K"
+write_snapshot_for "s42" 500000 "$FIX/t42.jsonl"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s42","transcript_path":"'"$FIX/t42.jsonl"'"}')
+assert_true "T-42: fast path above threshold -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
+assert_true "T-42: reminder reports 500000 (impossible via fallback)" '[[ "$OUT" == *"500000"* ]]'
+
+# --- T-43: snap=100k + transcript=500k + threshold=200k + stale flag ->
+# silent + flag cleared (transcript fallback would leave flag set).
+cleanup
+make_transcript "$FIX/t43.jsonl" "$LINE_500K"
+write_snapshot_for "s43" 100000 "$FIX/t43.jsonl"
+: >"$CACHE/compact-warned-s43"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s43","transcript_path":"'"$FIX/t43.jsonl"'"}')
+assert_eq "T-43: fast path below threshold -> silent" "" "$OUT"
+assert_true "T-43: flag cleared via snapshot path" '[[ ! -e "$CACHE/compact-warned-s43" ]]'
+
+# --- T-44: re-arm flow. Stale snap + small transcript + stale flag ->
+# fallback clears flag (composes with T-2 to cover post-/compact).
+cleanup
+make_transcript "$FIX/t44.jsonl" "$LINE_500K"
+read -r T44_MTIME T44_SIZE < <(get_transcript_meta "$FIX/t44.jsonl")
+write_snapshot_raw "s44" 750000 "$T44_MTIME" "$T44_SIZE"
+: >"$CACHE/compact-warned-s44"
+make_transcript "$FIX/t44.jsonl" "$LINE_50K"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s44","transcript_path":"'"$FIX/t44.jsonl"'"}')
+assert_eq "T-44: stale snap + small transcript -> silent" "" "$OUT"
+assert_true "T-44: stale flag cleared via fallback" '[[ ! -e "$CACHE/compact-warned-s44" ]]'
+
+# --- T-45: phase 3 of re-arm. Refreshed snap re-arms for the same sid after
+# T-44 cleared the flag.
+make_transcript "$FIX/t44.jsonl" "$LINE_500K"
+write_snapshot_for "s44" 750000 "$FIX/t44.jsonl"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s44","transcript_path":"'"$FIX/t44.jsonl"'"}')
+assert_true "T-45: refreshed snap re-arms -> reports 750000" '[[ "$OUT" == *"750000"* ]]'
+
+# --- T-46: mtime_ns mismatch -> fallback (transcript below threshold, silent).
+cleanup
+make_transcript "$FIX/t46.jsonl" "$LINE_100K"
+read -r _ T46_SIZE < <(get_transcript_meta "$FIX/t46.jsonl")
+write_snapshot_raw "s46" 500000 "99999999999" "$T46_SIZE"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s46","transcript_path":"'"$FIX/t46.jsonl"'"}')
+assert_eq "T-46: mtime mismatch -> fallback silent" "" "$OUT"
+
+# --- T-47: size mismatch -> fallback. Pairs with T-46 so dropping either
+# fingerprint field surfaces.
+cleanup
+make_transcript "$FIX/t47.jsonl" "$LINE_100K"
+read -r T47_MTIME _ < <(get_transcript_meta "$FIX/t47.jsonl")
+write_snapshot_raw "s47" 500000 "$T47_MTIME" "999"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s47","transcript_path":"'"$FIX/t47.jsonl"'"}')
+assert_eq "T-47: size mismatch -> fallback silent" "" "$OUT"
+
+# --- T-48: malformed snapshot JSON -> fallback. Defense against refactors
+# that move parsing into a path where exceptions don't fall through.
+cleanup
+make_transcript "$FIX/t48.jsonl" "$LINE_100K"
+mkdir -p "$SNAP_DIR"
+printf '%s\n' '{not valid json' >"$SNAP_DIR/s48.json"
+OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s48","transcript_path":"'"$FIX/t48.jsonl"'"}')
+assert_eq "T-48: malformed snapshot JSON -> fallback silent" "" "$OUT"
+
+# --- v3.1.0 writer tests (W-1..W-4) -----------------------------------------
+
+# --- W-1: current_usage sum excludes output_tokens.
+cleanup
+make_transcript "$FIX/w1.jsonl" "$LINE_100K"
+run_writer "$(writer_stdin w1 "$FIX/w1.jsonl" '{"context_window_size":1000000,"used_percentage":30,"current_usage":{"input_tokens":100000,"output_tokens":9999999,"cache_creation_input_tokens":200000,"cache_read_input_tokens":50000}}')" >/dev/null
+assert_eq "W-1: 100k+200k+50k = 350k (output_tokens excluded)" "350000" "$(read_snapshot_field w1 current_context_tokens)"
+
+# --- W-2: fallback rounds used_percentage * size.
+cleanup
+make_transcript "$FIX/w2.jsonl" "$LINE_100K"
+run_writer "$(writer_stdin w2 "$FIX/w2.jsonl" '{"context_window_size":1000000,"used_percentage":44.5,"current_usage":null}')" >/dev/null
+assert_eq "W-2: round(44.5/100 * 1M) = 445000" "445000" "$(read_snapshot_field w2 current_context_tokens)"
+
+# --- W-3: null on both sources -> stale snapshot deleted.
+cleanup
+make_transcript "$FIX/w3.jsonl" "$LINE_100K"
+write_snapshot_raw "w3" 999999 "1" "1"
+run_writer "$(writer_stdin w3 "$FIX/w3.jsonl" '{"context_window_size":1000000,"used_percentage":null,"current_usage":null}')" >/dev/null
+assert_true "W-3: both sources null -> snapshot deleted" '[[ ! -f "$SNAP_DIR/w3.json" ]]'
+
+# --- W-4: regex-valid sid uses verbatim filename; traversal sid hashes.
+cleanup
+make_transcript "$FIX/w4.jsonl" "$LINE_100K"
+W4_CW='{"context_window_size":1000,"used_percentage":10,"current_usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}'
+run_writer "$(writer_stdin w4-ok "$FIX/w4.jsonl" "$W4_CW")" >/dev/null
+assert_true "W-4a: regex-valid sid -> verbatim filename" '[[ -f "$SNAP_DIR/w4-ok.json" ]]'
+W4_EVIL='../../evil'
+W4_EVIL_SHA1=$("$PY" -c "import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest())" "$W4_EVIL")
+run_writer "$(writer_stdin "$W4_EVIL" "$FIX/w4.jsonl" "$W4_CW")" >/dev/null
+assert_true "W-4b: traversal sid -> hashed filename, no escape" '[[ -f "$SNAP_DIR/$W4_EVIL_SHA1.json" ]] && [[ ! -e "$SNAP_DIR/../../evil.json" ]]'
 
 # Stop-hook tests below depend on the Task-1 T-0 gate. Skip if gate failed.
 if (( STOP_FIXTURE_OK == 1 )); then
