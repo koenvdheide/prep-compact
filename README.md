@@ -2,7 +2,7 @@
 
 ## Why
 
-Claude Code's auto-compact misses important details and runs late in the 1M Opus context window. Context is usually already degrading by the time it fires, and the default summary generated for compaction is pretty iffy, it often doesn't save which files, decisions, or blockers you wanted preserved. Additionally, it forgets what subagents were running before compaction. Running `/compact <instructions>` with a tailored prompt gives dramatically cleaner resumption, but requires you to remember to do it and design the prompt. This plugin nags you at the right moment and drafts the tailored prompt for you to preserve vital context.
+Claude Code's auto-compact misses important details and runs late in the 1M Opus context window. Context is usually already degrading by the time it fires, and the default summary generated for compaction is pretty iffy — it often doesn't save which files, decisions, or blockers you wanted preserved, it forgets what subagents were running, and it has no memory of state from *before* the previous compaction. Running `/compact <instructions>` with a tailored prompt gives dramatically cleaner resumption, but requires you to remember to do it and design the prompt. This plugin nags you at the right moment and drafts the tailored prompt for you — and because a sister `Stop` hook continuously merges fresh state into a warm on-disk handoff, the draft carries forward context that **accumulates across multiple compactions**, not just the current in-memory window.
 
 ## How It Works
 
