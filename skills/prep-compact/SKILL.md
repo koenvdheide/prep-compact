@@ -44,36 +44,24 @@ Default for ANY field with no direct evidence: omit per the "omit rather than fa
 
 Only claim what is observable. Omit rather than fabricate — if you do not know whether tests are passing, say nothing about tests.
 
-## 4. Produce the /compact block — mini-schema (unchanged from v2.1.0)
+## 4. Produce the /compact block — mini-schema
 
-Default: multiline. Labeled subslots inside `decisions:` and `state:` so a post-compact resumer has canonical fields to scan, not freeform prose.
-
-```
-goal: <one sentence>
-next: <verb anchor — edit/run/inspect/ask/wait — concrete enough to execute without re-asking the user>
-files: <minimum set needed to execute `next`, spec/plan first, code files after in relevance order>
-decisions: decided=<key decisions with rationale>; constraints=<hard requirements + anti-patterns user stated>; blockers=<unresolved review/QA findings, failing tests, pending user answers>
-state: changes=<uncommitted files>; tests=<passing/failing/unknown>; verify=<shortest rerunnable command, e.g. "bash test/run-tests.sh" — omit if none>; in_progress=<mid-implementation markers>; agents=<"agent <id>: wait|ignore|close" per running agent, or "none">
-```
-
-Subslots may be omitted when truly empty (e.g. `decisions: decided=X` if no constraints or blockers). Write `none` only when silence would be ambiguous.
-
-Single-line fallback if `/compact` strips newlines:
+Default output: **single-line**, fields separated by ` | `. The post-compact resumer reads single-line and multi-line identically; single-line eliminates the "newline after `/compact`" failure mode. Field semantics: §2 (extractive), §3 (analytical).
 
 ```
-goal: ... | next: ... | files: ... | decisions: decided=...; constraints=...; blockers=... | state: changes=...; tests=...; verify=...; in_progress=...; agents=...
+/compact goal: <one sentence> | next: <verb anchor — edit/run/inspect/ask/wait — concrete enough to execute without re-asking the user> | files: <minimum set needed to execute `next`, spec/plan first, code files after in relevance order> | decisions: decided=<key decisions with rationale>; constraints=<hard requirements + anti-patterns user stated>; blockers=<unresolved review/QA findings, failing tests, pending user answers> | state: changes=<uncommitted files>; tests=<passing/failing/unknown>; verify=<shortest rerunnable command, e.g. "bash test/run-tests.sh" — omit if none>; in_progress=<mid-implementation markers>; agents=<"agent <id>: wait|ignore|close" per running agent, or "none">
 ```
+
+CRITICAL: `/compact` and `goal:` must be on the same line, separated by a single space. A newline directly after `/compact` makes Claude Code fire the bare command and drop the instructions. Subslots may be omitted when empty; write `none` only when silence would be ambiguous. Multi-line form is permitted for pre-paste inspection (split fields after `goal:` onto their own lines); the same-line rule for `/compact goal:` still applies.
 
 **Compression:** preserve verbatim paths, identifiers, decisions, constraints, blockers, agent-IDs. Drop chitchat, transient tool output, and exploratory dead ends that were not acted on — but keep error text or dead ends that underpin a current blocker or decision. If length presses, reference the plan/spec file path and omit redundant file enumerations rather than inlining everything.
 
 ## 5. Present to the user
 
-> Compaction prep ready. Copy and run:
->
-> ```
-> /compact <instructions text>
-> ```
->
-> After compact, I'll re-read the files in `files:` and resume from `next:`.
+Output a preamble, the §4 schema with values filled in inside a single fenced code block, then a closing note. Do NOT wrap any of this in `>` blockquote — some terminal/UI clients copy the prefix into the paste, which breaks the slash-command parse.
+
+- Preamble: "Compaction prep ready. Copy and run:"
+- Fenced block body: §4's single-line schema with values filled in (literal first line must begin `/compact goal: ...`)
+- Closing: "After compact, I'll re-read the files in `files:` and resume from `next:`."
 
 If you used the fallback path (no warm handoff matched), prefix the output with: "Note: no warm handoff matched cwd; surveyed from in-memory conversation."
