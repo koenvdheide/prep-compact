@@ -685,7 +685,7 @@ run_stop_hook '{"session_id":"s52","transcript_path":"'"$FIX/t52.jsonl"'","cwd":
 HANDOFF=$(to_native "$CACHE/handoff-s52.json")
 assert_eq "T-52: real path kept"         "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if 'src/keep.ts' in d['recent_files'] else 'no')")"
 assert_eq "T-52: .git filtered"          "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('.git' in p for p in d['recent_files']) else 'no')")"
-assert_eq "T-52: temp filtered"          "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('codex-x' in p for p in d['recent_files']) else 'no')")"
+assert_eq "T-52: temp NOT filtered (kept)" "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('codex-x' in p for p in d['recent_files']) else 'no')")"
 assert_eq "T-52: plugin-data filtered"   "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('handoff-z' in p for p in d['recent_files']) else 'no')")"
 assert_eq "T-52: ~/.claude/settings.json kept" "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('settings.json' in p for p in d['recent_files']) else 'no')")"
 assert_eq "T-52: relative plugin-data filtered" "no" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('handoff-rel' in p for p in d['recent_files']) else 'no')")"
@@ -700,7 +700,7 @@ open('$(to_native "$CACHE/handoff-s53.json")','w').write(json.dumps(p))
 run_stop_hook '{"session_id":"s53","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
 HANDOFF=$(to_native "$CACHE/handoff-s53.json")
 assert_eq "T-53: prior real path kept" "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if 'src/old.ts' in d['cumulative_files'] else 'no')")"
-assert_eq "T-53: prior noise purged"   "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any(('.git/config' in p) or ('noise.txt' in p) for p in d['cumulative_files']) else 'no')")"
+assert_eq "T-53: prior .git noise purged" "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('.git/config' in p for p in d['cumulative_files']) else 'no')")"
 
 # T-54: injected user messages filtered from recent_user_requests
 cleanup

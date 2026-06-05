@@ -86,9 +86,6 @@ import sys, os, json, datetime, re
 
 _NOISE_RE = re.compile(
     r'(?:^|[\\/])\.git[\\/]'                          # .git/ internals
-    r'|^/tmp/'                                        # POSIX root temp
-    r'|^[A-Za-z]:[\\/]tmp[\\/]'                       # C:\tmp\ , C:/tmp/
-    r'|[\\/]AppData[\\/]Local[\\/]Temp[\\/]'          # Windows per-user temp
     r'|(?:^|[\\/])\.claude[\\/]plugins[\\/](?:data|cache)[\\/]',  # plugin data/cache (rel + abs)
     re.IGNORECASE)
 def _is_noise_path(p):
