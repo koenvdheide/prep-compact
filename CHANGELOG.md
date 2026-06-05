@@ -4,6 +4,12 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.2] - 2026-06-05
+
+### Fixed
+
+- The Stop hook no longer records grep/glob result lines that carry shell code (e.g. a context line `SKILL="$DIR/x.sh"`) as file paths in the handoff. Only clean path tokens are captured.
+
 ## [3.0.1] - 2026-06-05
 
 ### Fixed
