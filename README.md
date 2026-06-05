@@ -20,6 +20,8 @@ CC does not programatically expose how many tokens are in use for the current se
 
 The reminder fires once per threshold-crossing. Once the token count drops back below the threshold (after you `/compact`), the flag is auto-cleared on the next turn and future crossings re-arm cleanly. You can also invoke `/prep-compact` manually at any time to refresh the draft right before running `/compact`.
 
+The skill resolves *this* session's own handoff by its Claude Code session id (not by newest-modified file), so when several sessions run in the same project, `/prep-compact` always reads the invoking session's record. If the session id is unavailable it falls back to surveying the live conversation — never another session's data.
+
 
 ## Install
 
@@ -66,6 +68,7 @@ See [PRIVACY.md](PRIVACY.md) for the full statement.
 - **Undocumented transcript format.** The hook parses `.message.usage` from the transcript `.jsonl`, which Anthropic doesn't officially document. Silent no-op if the schema changes.
 - **Manual invocation.** The reminder is informational — it names the warm handoff path and points at `/prep-compact:prep-compact`. Claude does not auto-invoke the skill; type `/prep-compact` manually when you're ready to compact.
 - **Staleness across turns.** The Stop hook refreshes the warm handoff after every assistant message, so `/prep-compact` reads current state. If the conversation has been idle and the handoff has been updated since the last user prompt, the draft will reflect that. There's a one-turn window of stale handoff right after `/compact` runs (UserPromptSubmit fires before the next Stop), but the next assistant turn refreshes it.
+- **Session-id reliance.** Binding uses the `CLAUDE_CODE_SESSION_ID` runtime variable. If a future Claude Code stops exposing it, the skill degrades to an in-memory survey (no warm handoff), which is safe but less complete.
 
 ## License
 
