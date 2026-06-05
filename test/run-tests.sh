@@ -91,7 +91,7 @@ fi
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
 #   PR-comment fix: +3 Stop-dep (T-32cap +1 short-still-captured, T-32prior +2)
-EXPECTED_PASS=123
+EXPECTED_PASS=124
 SKIPPED=0
 
 run_hook() {
@@ -353,9 +353,10 @@ OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"s40","transcript_pat
 EXPECTED_T40="Session context is approximately 250000 tokens (above configured threshold of 1 tokens). Run /prep-compact:prep-compact to survey current state and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first."
 assert_eq "T-40: handoff-missing reminder verbatim" "$EXPECTED_T40" "$OUT"
 
-# --- T-41: SKILL.md mentions discovery via newest-mtime + cwd matching
+# --- T-41: SKILL.md documents session-id binding via the helper (not mtime)
 SKILL="$SCRIPT_DIR/../skills/prep-compact/SKILL.md"
-assert_true "T-41: SKILL.md mentions newest-mtime discovery" '[[ "$(cat "$SKILL")" == *"newest"*"mtime"* || "$(cat "$SKILL")" == *"highest"*"mtime"* ]]'
+assert_true "T-41: SKILL.md documents resolve-handoff.sh binding" '[[ "$(cat "$SKILL")" == *"resolve-handoff.sh"* ]]'
+assert_true "T-41: SKILL.md no longer documents mtime discovery"  '[[ "$(cat "$SKILL")" != *"mtime"* ]]'
 
 # Stop-hook tests below depend on the Task-1 T-0 gate. Skip if gate failed.
 if (( STOP_FIXTURE_OK == 1 )); then

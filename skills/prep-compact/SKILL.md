@@ -9,14 +9,16 @@ When invoked, read the warm handoff file maintained by the Stop hook, then perfo
 
 ## 1. Discovery
 
-Locate the warm handoff file:
+Resolve THIS session's own handoff via the helper — never by newest-modified file.
 
-1. List `${CLAUDE_PLUGIN_DATA}/handoff-*.json` (resolve `${CLAUDE_PLUGIN_DATA}` from the environment; if unset, fall back to `~/.claude/cache/`).
-2. Parse each JSON.
-3. Filter to entries whose `cwd` matches the current working directory.
-4. Of those, pick the one with the highest `mtime` (newest write).
+1. Run `bash "<skill-base>/resolve-handoff.sh" "$PWD"`, where `<skill-base>` is this skill's base directory (substitute the literal path from the `Base directory for this skill:` line you were given at load — there is no `$SKILL_BASE` variable; a literal `$SKILL_BASE` would resolve to `/resolve-handoff.sh` and break this) and `$PWD` is the current directory.
+2. Read the helper's first stdout line:
+   - `HIT` → the second line is the handoff file's absolute path. Read that JSON and use its extractive fields (§2), then run the §3 analytical pass.
+   - `MISS` → no handoff matched this session (not written yet, or you changed directories). Treat all extractive sources as empty (`cumulative_files=[]`, `in_progress=[]` with status `unknown`, `recent_task_launches=[]`, `recent_user_requests=[]`) and run §3 against the live conversation alone. Prefix the output: "Note: no handoff matched this session; surveyed from in-memory conversation."
+   - `NOSID` → no session id available. Same in-memory survey as `MISS`. Prefix: "Note: session id unavailable; surveyed from in-memory conversation."
+   - any other or empty output → treat as `MISS`.
 
-If no matching handoff is found, treat all extractive sources as empty: `cumulative_files=[]`, `in_progress=[]` with status `unknown`, `recent_task_launches=[]`, `recent_user_requests=[]`. Then run §3 analytical pass against the in-memory conversation alone — it produces the same mini-schema output, just sourced entirely from the live transcript instead of from the warm handoff. Prefix the output with: "Note: no warm handoff matched cwd; surveyed from in-memory conversation."
+The helper binds to the invoking session by `$CLAUDE_CODE_SESSION_ID` and validates the handoff's stored `cwd`, so a sibling session's handoff is never selected. If the session id is ever absent the helper returns `NOSID` and the skill degrades to the in-memory survey — safe, never cross-session.
 
 ## 2. Extractive fields — sourced from handoff JSON
 
@@ -64,4 +66,4 @@ Output a preamble, the §4 schema with values filled in inside a single fenced c
 - Fenced block body: §4's single-line schema with values filled in (literal first line must begin `/compact goal: ...`)
 - Closing: "After compact, I'll re-read the files in `files:` and resume from `next:`."
 
-If you used the fallback path (no warm handoff matched), prefix the output with: "Note: no warm handoff matched cwd; surveyed from in-memory conversation."
+If you used the in-memory fallback (`MISS` or `NOSID` from §1), keep the exact prefix §1 specifies for that case.
