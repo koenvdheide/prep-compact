@@ -4,6 +4,12 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `/prep-compact` now binds the handoff lookup to the invoking session's id and validates the stored working directory, instead of selecting the newest-modified handoff. Fixes cross-session contamination when several sessions share a working directory.
+
 ## [3.0.0] - 2026-04-26
 
 Adds a Stop hook maintaining a continuously-fresh on-disk handoff. UserPromptSubmit reminder becomes informational. Skill reads warm handoff plus a targeted analytical pass — no fresh full survey when the handoff is current. Four Codex review rounds shaped the design.
