@@ -20,7 +20,7 @@ CC does not programatically expose how many tokens are in use for the current se
 
 The reminder fires once per threshold-crossing. Once the token count drops back below the threshold (after you `/compact`), the flag is auto-cleared on the next turn and future crossings re-arm cleanly. You can also invoke `/prep-compact` manually at any time to refresh the draft right before running `/compact`.
 
-The skill resolves *this* session's own handoff by its Claude Code session id (not by newest-modified file), so when several sessions run in the same project, `/prep-compact` always reads the invoking session's record. If the session id is unavailable it falls back to surveying the live conversation — never another session's data.
+The skill resolves *this* session's own handoff by its Claude Code session id (not by newest-modified file), so when several sessions run in the same project, `/prep-compact` reads the invoking session's own record and no other. If no matching handoff exists yet (none written, or you changed directories), or the session id is unavailable, it falls back to surveying the live conversation — never another session's data.
 
 
 ## Install
