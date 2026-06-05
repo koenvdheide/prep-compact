@@ -193,6 +193,10 @@ for entry in reversed(parsed):
 # shaped lines. Walk newest-first parity with Tier-A; extract path TOKEN (not
 # whole line) so "src/foo.ts:12:match" becomes "src/foo.ts"; handle Windows drive letters.
 
+# A resolved path token never carries shell/code punctuation. Without this,
+# grep CONTEXT lines like '357-SKILL="$DIR/skills/x.sh"' slip through as "paths".
+_PATH_TOKEN_JUNK = set('"' + "'" + '`' + '=$<>|*?')
+
 def first_path_token(line):
     if not line:
         return None
@@ -209,6 +213,8 @@ def first_path_token(line):
     last_sep = max(candidate.rfind('/'), candidate.rfind('\\'))
     tail = candidate[last_sep+1:]
     if '.' in tail and len(tail) > 1:
+        if any(ch in _PATH_TOKEN_JUNK for ch in candidate):
+            return None
         return candidate
     return None
 
