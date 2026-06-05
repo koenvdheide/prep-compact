@@ -82,7 +82,21 @@ fi
 # handoff fields, and write JSON. Always exits 0; errors logged to stderr.
 # Python stderr is propagated so deliberate diagnostic messages (e.g. atomic-replace failure) reach the test harness; fail-open via || true.
 "$PY" - "$TRANSCRIPT_NATIVE" "$HANDOFF_NATIVE" "$SAFE_SID" "$CWD" "$TRANSCRIPT_PATH" <<'PYEOF' || true
-import sys, os, json, datetime
+import sys, os, json, datetime, re
+
+_NOISE_RE = re.compile(
+    r'(?:^|[\\/])\.git[\\/]'                          # .git/ internals
+    r'|^/tmp/'                                        # POSIX root temp
+    r'|^[A-Za-z]:[\\/]tmp[\\/]'                       # C:\tmp\ , C:/tmp/
+    r'|[\\/]AppData[\\/]Local[\\/]Temp[\\/]'          # Windows per-user temp
+    r'|(?:^|[\\/])\.claude[\\/]plugins[\\/](?:data|cache)[\\/]',  # plugin data/cache (rel + abs)
+    re.IGNORECASE)
+def _is_noise_path(p):
+    return isinstance(p, str) and bool(_NOISE_RE.search(p))
+
+_INJECTION_PREFIXES = ('<task-notification>', '[SYSTEM NOTIFICATION', 'Base directory for this skill:')
+def _is_injected(text):
+    return isinstance(text, str) and text.lstrip().startswith(_INJECTION_PREFIXES)
 
 TAIL_BYTES = 1_048_576
 MAX_LINE_BYTES = 1_048_576
@@ -142,7 +156,7 @@ def content_blocks(msg):
 # Extract recent_files (Tier A then B). Walk newest -> oldest.
 recent_files_seen = []
 def add_path(p):
-    if isinstance(p, str) and p and p not in recent_files_seen:
+    if isinstance(p, str) and p and p not in recent_files_seen and not _is_noise_path(p):
         recent_files_seen.append(p)
 
 TIER_A_TOOLS = {'Read', 'Edit', 'Write', 'NotebookEdit'}
@@ -263,6 +277,8 @@ for entry in reversed(parsed):
     if not text_chunks:
         continue
     combined = '\n'.join(text_chunks)
+    if _is_injected(combined):
+        continue
     if len(combined) > USER_REQUESTS_MAX_CHARS:
         continue  # oversized single message — skip, keep walking for shorter ones
     if total_chars + len(combined) > USER_REQUESTS_MAX_CHARS:
@@ -346,6 +362,8 @@ for p in prior_cumulative + list(reversed(recent_files)):
         seen.add(p)
         merged_cumulative.append(p)
 
+merged_cumulative = [p for p in merged_cumulative if not _is_noise_path(p)]
+
 CUMULATIVE_CAP = 200
 if len(merged_cumulative) > CUMULATIVE_CAP:
     merged_cumulative = merged_cumulative[-CUMULATIVE_CAP:]
@@ -371,6 +389,8 @@ merged_quotes = []
 total_quote_chars = 0
 for q in user_requests + prior_user_requests:
     if not isinstance(q, str) or not q:
+        continue
+    if _is_injected(q):
         continue
     if q in seen_quotes:
         continue

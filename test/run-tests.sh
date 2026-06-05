@@ -91,7 +91,7 @@ fi
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
 #   PR-comment fix: +3 Stop-dep (T-32cap +1 short-still-captured, T-32prior +2)
-EXPECTED_PASS=91
+EXPECTED_PASS=105
 SKIPPED=0
 
 run_hook() {
@@ -661,8 +661,72 @@ PRIOR_INTACT=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes'
 assert_eq "T-38p: simulated replace fail -> prior preserved (sentinel intact)" "yes" "$PRIOR_INTACT"
 assert_true "T-38p: stderr warning printed on simulated fail" '[[ "$ERR" == *"replace failed twice, prior preserved"* ]]'
 
+# T-52: file noise filter — .git/temp/plugin-data excluded, real path kept
+cleanup
+FIX_ENV="$FIX" "$PY" -c "
+import json, os
+t=[{'message':{'role':'assistant','content':[
+  {'type':'tool_use','id':'r1','name':'Read','input':{'file_path':'src/keep.ts'}},
+  {'type':'tool_use','id':'r2','name':'Read','input':{'file_path':'.git/hooks/pre-commit.sample'}},
+  {'type':'tool_use','id':'r3','name':'Read','input':{'file_path':'/tmp/codex-x.txt'}},
+  {'type':'tool_use','id':'r4','name':'Read','input':{'file_path':'C:/Users/u/.claude/plugins/data/prep-compact-inline/handoff-z.json'}},
+  {'type':'tool_use','id':'r5','name':'Read','input':{'file_path':'C:/Users/u/.claude/settings.json'}},
+  {'type':'tool_use','id':'r6','name':'Read','input':{'file_path':'.claude/plugins/data/prep-compact-inline/handoff-rel.json'}}],
+  'usage':{'input_tokens':1,'cache_creation_input_tokens':1,'cache_read_input_tokens':0}}}]
+open(os.environ['FIX_ENV']+'/t52.jsonl','w').write('\n'.join(json.dumps(x) for x in t)+'\n')
+"
+run_stop_hook '{"session_id":"s52","transcript_path":"'"$FIX/t52.jsonl"'","cwd":"/sample","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s52.json")
+assert_eq "T-52: real path kept"         "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if 'src/keep.ts' in d['recent_files'] else 'no')")"
+assert_eq "T-52: .git filtered"          "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('.git' in p for p in d['recent_files']) else 'no')")"
+assert_eq "T-52: temp filtered"          "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('codex-x' in p for p in d['recent_files']) else 'no')")"
+assert_eq "T-52: plugin-data filtered"   "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('handoff-z' in p for p in d['recent_files']) else 'no')")"
+assert_eq "T-52: ~/.claude/settings.json kept" "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('settings.json' in p for p in d['recent_files']) else 'no')")"
+assert_eq "T-52: relative plugin-data filtered" "no" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('handoff-rel' in p for p in d['recent_files']) else 'no')")"
+
+# T-53: prior cumulative_files noise purged on next write
+cleanup
+"$PY" -c "
+import json
+p={'version':'3.0','session_id':'s53','cwd':'/sample','transcript_path':'/x','transcript_mtime_at_write':0,'written_at':'2026-01-01T00:00:00Z','cumulative_files':['src/old.ts','.git/config','/tmp/noise.txt'],'recent_files':[],'in_progress_status':'unknown','in_progress':[],'recent_task_launches':[],'recent_user_requests':[]}
+open('$(to_native "$CACHE/handoff-s53.json")','w').write(json.dumps(p))
+"
+run_stop_hook '{"session_id":"s53","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s53.json")
+assert_eq "T-53: prior real path kept" "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if 'src/old.ts' in d['cumulative_files'] else 'no')")"
+assert_eq "T-53: prior noise purged"   "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any(('.git/config' in p) or ('noise.txt' in p) for p in d['cumulative_files']) else 'no')")"
+
+# T-54: injected user messages filtered from recent_user_requests
+cleanup
+FIX_ENV="$FIX" "$PY" -c "
+import json, os
+t=[{'message':{'role':'user','content':[{'type':'text','text':'real request: do the thing'}]}},
+   {'message':{'role':'user','content':[{'type':'text','text':'<task-notification>\nbg done\n</task-notification>'}]}},
+   {'message':{'role':'user','content':[{'type':'text','text':'Base directory for this skill: C:/x\n# Skill\nblah'}]}},
+   {'message':{'role':'user','content':[{'type':'text','text':'[SYSTEM NOTIFICATION - NOT USER INPUT]\nbackground event'}]}}]
+open(os.environ['FIX_ENV']+'/t54.jsonl','w').write('\n'.join(json.dumps(x) for x in t)+'\n')
+"
+run_stop_hook '{"session_id":"s54","transcript_path":"'"$FIX/t54.jsonl"'","cwd":"/sample","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s54.json")
+assert_eq "T-54: real request kept"        "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('real request' in q for q in d['recent_user_requests']) else 'no')")"
+assert_eq "T-54: task-notification filtered" "no" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('task-notification' in q for q in d['recent_user_requests']) else 'no')")"
+assert_eq "T-54: skill-load filtered"      "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('Base directory for this skill' in q for q in d['recent_user_requests']) else 'no')")"
+assert_eq "T-54: system-notification filtered" "no" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('SYSTEM NOTIFICATION' in q for q in d['recent_user_requests']) else 'no')")"
+
+# T-55: prior recent_user_requests injected noise purged on merge (mirrors T-53 for requests)
+cleanup
+"$PY" -c "
+import json
+p={'version':'3.0','session_id':'s55','cwd':'/sample/cwd','transcript_path':'/x','transcript_mtime_at_write':0,'written_at':'2026-01-01T00:00:00Z','cumulative_files':[],'recent_files':[],'in_progress_status':'unknown','in_progress':[],'recent_task_launches':[],'recent_user_requests':['real prior intent','<task-notification>\nold bg event\n</task-notification>']}
+open('$(to_native "$CACHE/handoff-s55.json")','w').write(json.dumps(p))
+"
+run_stop_hook '{"session_id":"s55","transcript_path":"'"$FIX/transcript-handoff-no-user-text.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s55.json")
+assert_eq "T-55: prior real request kept" "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('real prior intent' in q for q in d['recent_user_requests']) else 'no')")"
+assert_eq "T-55: prior injected purged"   "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('task-notification' in q for q in d['recent_user_requests']) else 'no')")"
+
 else
-  SKIPPED=42
+  SKIPPED=56
 fi  # STOP_FIXTURE_OK
 
 # --- Final guard: false-green blocker
