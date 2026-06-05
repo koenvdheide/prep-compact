@@ -91,7 +91,7 @@ fi
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
 #   PR-comment fix: +3 Stop-dep (T-32cap +1 short-still-captured, T-32prior +2)
-EXPECTED_PASS=129
+EXPECTED_PASS=130
 SKIPPED=0
 
 run_hook() {
@@ -736,9 +736,10 @@ assert_eq "T-55: prior injected purged"   "no"  "$("$PY" -c "import json;d=json.
 cleanup
 JUNK_LINE='357-SKILL="$SCRIPT_DIR/../skills/prep-compact/SKILL.md"' \
 REAL_LINE='src/real/keep.ts:42:SKILL' \
+LEGIT_LINE='fixtures/a=b.json:1:match' \
 FIX_ENV="$FIX" "$PY" -c "
 import json, os
-content = os.environ['JUNK_LINE'] + '\n' + os.environ['REAL_LINE'] + '\n'
+content = os.environ['JUNK_LINE'] + '\n' + os.environ['REAL_LINE'] + '\n' + os.environ['LEGIT_LINE'] + '\n'
 turns = [
   {'message':{'role':'assistant','content':[{'type':'tool_use','id':'gj1','name':'Grep','input':{'pattern':'SKILL','output_mode':'content'}}],'usage':{'input_tokens':100,'cache_creation_input_tokens':1000,'cache_read_input_tokens':0}}},
   {'message':{'role':'user','content':[{'type':'tool_result','tool_use_id':'gj1','content':content}]}},
@@ -749,10 +750,11 @@ with open(os.environ['FIX_ENV']+'/t56.jsonl','w') as f:
 run_stop_hook '{"session_id":"s56","transcript_path":"'"$FIX/t56.jsonl"'","cwd":"/sample","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
 HANDOFF=$(to_native "$CACHE/handoff-s56.json")
 assert_eq "T-56: real grep path kept"      "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('src/real/keep.ts' in p for p in d['recent_files']) else 'no')")"
+assert_eq "T-56: legit =-char path kept"   "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('a=b.json' in p for p in d['recent_files']) else 'no')")"
 assert_eq "T-56: shell-junk line rejected" "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any(('SCRIPT_DIR' in p) or ('SKILL=' in p) or ('prep-compact/SKILL.md' in p) for p in d['recent_files']) else 'no')")"
 
 else
-  SKIPPED=58
+  SKIPPED=59
 fi  # STOP_FIXTURE_OK
 
 # ===================================================================
