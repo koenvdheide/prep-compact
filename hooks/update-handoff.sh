@@ -193,9 +193,11 @@ for entry in reversed(parsed):
 # shaped lines. Walk newest-first parity with Tier-A; extract path TOKEN (not
 # whole line) so "src/foo.ts:12:match" becomes "src/foo.ts"; handle Windows drive letters.
 
-# A resolved path token never carries shell/code punctuation. Without this,
-# grep CONTEXT lines like '357-SKILL="$DIR/skills/x.sh"' slip through as "paths".
-_PATH_TOKEN_JUNK = set('"' + "'" + '`' + '=$<>|*?')
+# A resolved path token never carries quote/$/backtick/redirect/glob punctuation.
+# Without this, grep CONTEXT lines like '357-SKILL="$DIR/skills/x.sh"' slip through
+# as "paths". '=' and "'" are intentionally NOT rejected -- they occur in real
+# filenames (a=b.json, John's-note.md) and the set below still catches the junk.
+_PATH_TOKEN_JUNK = set('"' + '`' + '$<>|*?')
 
 def first_path_token(line):
     if not line:
