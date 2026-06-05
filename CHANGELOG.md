@@ -4,12 +4,13 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.1] - 2026-06-05
 
 ### Fixed
 
 - `/prep-compact` now binds the handoff lookup to the invoking session's id and validates the stored working directory, instead of selecting the newest-modified handoff. Fixes cross-session contamination when several sessions share a working directory.
 - The drafted `/compact` command is now enforced single-line (multi-line escape hatch removed, pre-emit verify gate added), preventing a stray newline after `/compact` from dropping the instructions.
+- The Stop hook no longer records `.git/` internals or `.claude/plugins/{data,cache}/` paths in the handoff's file lists, and drops Claude Code's injected turns (`<task-notification>`, system notifications, skill-load preambles) from the captured user requests, so the handoff isn't polluted with non-user noise.
 
 ## [3.0.0] - 2026-04-26
 
