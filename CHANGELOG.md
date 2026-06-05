@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 
 - `/prep-compact` now binds the handoff lookup to the invoking session's id and validates the stored working directory, instead of selecting the newest-modified handoff. Fixes cross-session contamination when several sessions share a working directory.
+- The drafted `/compact` command is now enforced single-line (multi-line escape hatch removed, pre-emit verify gate added), preventing a stray newline after `/compact` from dropping the instructions.
 
 ## [3.0.0] - 2026-04-26
 

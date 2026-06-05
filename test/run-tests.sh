@@ -91,7 +91,7 @@ fi
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
 #   PR-comment fix: +3 Stop-dep (T-32cap +1 short-still-captured, T-32prior +2)
-EXPECTED_PASS=124
+EXPECTED_PASS=127
 SKIPPED=0
 
 run_hook() {
@@ -357,6 +357,11 @@ assert_eq "T-40: handoff-missing reminder verbatim" "$EXPECTED_T40" "$OUT"
 SKILL="$SCRIPT_DIR/../skills/prep-compact/SKILL.md"
 assert_true "T-41: SKILL.md documents resolve-handoff.sh binding" '[[ "$(cat "$SKILL")" == *"resolve-handoff.sh"* ]]'
 assert_true "T-41: SKILL.md no longer documents mtime discovery"  '[[ "$(cat "$SKILL")" != *"mtime"* ]]'
+
+# --- T-51: single-line /compact enforcement
+assert_true "T-51: multi-line escape hatch removed"   '[[ "$(cat "$SKILL")" != *"Multi-line form is permitted"* ]]'
+assert_true "T-51: verify gate present (single line)" '[[ "$(cat "$SKILL")" == *"single physical line"* ]]'
+assert_true "T-51: verify gate present (goal literal)" '[[ "$(cat "$SKILL")" == *"begins with the literal characters"* ]]'
 
 # Stop-hook tests below depend on the Task-1 T-0 gate. Skip if gate failed.
 if (( STOP_FIXTURE_OK == 1 )); then
