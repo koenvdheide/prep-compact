@@ -91,7 +91,8 @@ fi
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
 #   PR-comment fix: +3 Stop-dep (T-32cap +1 short-still-captured, T-32prior +2)
-EXPECTED_PASS=131
+#   v3.1 Task 1: +15 Stop-dep (T-24 +1, T-60..T-69 +14) -> EXPECTED_PASS 146, SKIPPED 74 when fixture missing
+EXPECTED_PASS=146
 SKIPPED=0
 
 run_hook() {
@@ -368,13 +369,18 @@ if (( STOP_FIXTURE_OK == 1 )); then
 
 STOP_HOOK="$SCRIPT_DIR/../hooks/update-handoff.sh"
 
+# CLAUDE_CODE_SESSION_ID is cleared so the hook's env-first safe_sid derivation
+# falls through to the stdin session_id these tests supply. The real session's
+# id leaks into the harness env otherwise, and env-first would bind every test
+# to it. Env-first behaviour itself is exercised by calling the hook directly
+# with CLAUDE_CODE_SESSION_ID set (T-66..T-69).
 run_stop_hook() {
   local stdin=$1; shift
-  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" bash "$STOP_HOOK" "$@" 2>/dev/null
+  printf '%s' "$stdin" | CLAUDE_CODE_SESSION_ID= HOME="$SANDBOX_HOME" bash "$STOP_HOOK" "$@" 2>/dev/null
 }
 run_stop_hook_err() {
   local stdin=$1; shift
-  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" bash "$STOP_HOOK" "$@"
+  printf '%s' "$stdin" | CLAUDE_CODE_SESSION_ID= HOME="$SANDBOX_HOME" bash "$STOP_HOOK" "$@"
 }
 
 # --- T-21: missing transcript_path -> fail-open silent
@@ -394,11 +400,13 @@ cleanup
 OUT=$(run_stop_hook '{not valid' 2>/dev/null)
 assert_eq "T-23: malformed stdin -> silent" "" "$OUT"
 
-# --- T-24: oversized session_id -> SHA-1 fallback (no escaped path)
+# --- T-24: oversized session_id -> skip (v3.1 drops the SHA-1 fallback)
 cleanup
 LONG=$(printf 'b%.0s' {1..200})
 OUT=$(run_stop_hook "{\"session_id\":\"$LONG\",\"transcript_path\":\"$FIX/transcript-handoff-multi-turn.jsonl\",\"cwd\":\"/x\",\"permission_mode\":\"default\",\"hook_event_name\":\"Stop\"}")
 assert_true "T-24: oversized sid -> raw name NOT used" '[[ ! -e "$CACHE/handoff-$LONG.json" ]]'
+ANY24=$(find "$CACHE" -type f -name 'handoff-*.json' 2>/dev/null | head -1)
+assert_eq "T-24: oversized sid -> no handoff written at all (no SHA-1 fallback)" "" "$ANY24"
 
 # --- T-25: path traversal session_id -> no escape
 cleanup
@@ -769,8 +777,86 @@ assert_eq "T-56: real grep path kept"      "yes" "$("$PY" -c "import json;d=json
 assert_eq "T-56: legit =-char path kept"   "yes" "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any('a=b.json' in p for p in d['recent_files']) else 'no')")"
 assert_eq "T-56: shell-junk line rejected" "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any(('SCRIPT_DIR' in p) or ('SKILL=' in p) or ('prep-compact/SKILL.md' in p) for p in d['recent_files']) else 'no')")"
 
+# ============================================================
+# v3.1 Task 1: Stop hook writes/clears the context-warn flag
+# ============================================================
+# Single assistant usage summing to 300000 (100000 + 200000 + 0).
+TOK_300K='{"message":{"role":"assistant","usage":{"input_tokens":100000,"cache_creation_input_tokens":200000,"cache_read_input_tokens":0}}}'
+
+# --- T-60: above threshold -> context-warn flag written with "<tokens> <threshold>"
+cleanup
+make_transcript "$FIX/t60.jsonl" "$TOK_300K"
+CLAUDE_CONTEXT_WARN_TOKENS=200000 run_stop_hook '{"session_id":"s60","transcript_path":"'"$FIX/t60.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_true "T-60: above threshold -> context-warn flag written" '[[ -e "$CACHE/context-warn-s60" ]]'
+assert_eq "T-60: flag content is '<tokens> <threshold>'" "300000 200000" "$(cat "$CACHE/context-warn-s60" 2>/dev/null)"
+
+# --- T-61: below threshold -> stale flag cleared (re-arm)
+cleanup
+make_transcript "$FIX/t61.jsonl" "$TOK_300K"
+: >"$CACHE/context-warn-s61"
+CLAUDE_CONTEXT_WARN_TOKENS=500000 run_stop_hook '{"session_id":"s61","transcript_path":"'"$FIX/t61.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_true "T-61: below threshold -> stale flag cleared" '[[ ! -e "$CACHE/context-warn-s61" ]]'
+
+# --- T-62: invalid CLAUDE_CONTEXT_WARN_TOKENS -> default 450000 (300k below -> no flag) + stderr warn
+cleanup
+make_transcript "$FIX/t62.jsonl" "$TOK_300K"
+ERR=$(CLAUDE_CONTEXT_WARN_TOKENS="not-a-number" run_stop_hook_err '{"session_id":"s62","transcript_path":"'"$FIX/t62.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' 2>&1 >/dev/null)
+assert_true "T-62: invalid threshold -> stderr 'ignoring invalid'" '[[ "$ERR" == *"ignoring invalid"* ]]'
+assert_true "T-62: default 450000 -> 300k below -> no flag" '[[ ! -e "$CACHE/context-warn-s62" ]]'
+
+# --- T-63: flag written with a trailing newline (atomic-write contract)
+cleanup
+make_transcript "$FIX/t63.jsonl" "$TOK_300K"
+CLAUDE_CONTEXT_WARN_TOKENS=1 run_stop_hook '{"session_id":"s63","transcript_path":"'"$FIX/t63.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_eq "T-63: flag is exactly one line (trailing newline present)" "1" "$(wc -l < "$CACHE/context-warn-s63" | tr -d ' ')"
+
+# --- T-64: stale run (future-mtime existing handoff) writes no flag (mtime-guard covers flag)
+cleanup
+make_transcript "$FIX/t64.jsonl" "$TOK_300K"
+"$PY" -c "
+import json
+prior = {'version':'3.0','session_id':'s64','cwd':'/x','transcript_path':'/x','transcript_mtime_at_write':9999999999.0,'written_at':'2099-01-01T00:00:00Z','cumulative_files':[],'recent_files':[],'in_progress_status':'unknown','in_progress':[],'recent_task_launches':[],'recent_user_requests':[]}
+open('$(to_native "$CACHE/handoff-s64.json")','w').write(json.dumps(prior))
+"
+CLAUDE_CONTEXT_WARN_TOKENS=1 run_stop_hook '{"session_id":"s64","transcript_path":"'"$FIX/t64.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_true "T-64: stale run (future-mtime handoff) writes no flag" '[[ ! -e "$CACHE/context-warn-s64" ]]'
+
+# --- T-65: Stop scan skips sidechain, uses earlier main-chain (same filters as UPS)
+cleanup
+SIDE_HUGE='{"isSidechain":true,"message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":888888,"cache_read_input_tokens":0}}}'
+make_transcript "$FIX/t65.jsonl" "$TOK_300K" "$SIDE_HUGE"
+CLAUDE_CONTEXT_WARN_TOKENS=250000 run_stop_hook '{"session_id":"s65","transcript_path":"'"$FIX/t65.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_eq "T-65: sidechain skipped -> flag uses main-chain 300000" "300000 250000" "$(cat "$CACHE/context-warn-s65" 2>/dev/null)"
+
+# --- T-66: safe_sid parity: env-valid + stdin-missing -> env sid used
+cleanup
+make_transcript "$FIX/t66.jsonl" "$TOK_300K"
+printf '%s' '{"transcript_path":"'"$FIX/t66.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' | CLAUDE_CONTEXT_WARN_TOKENS=1 CLAUDE_CODE_SESSION_ID="envsid66" HOME="$SANDBOX_HOME" bash "$STOP_HOOK" >/dev/null 2>&1
+assert_true "T-66: env-valid + stdin-missing -> flag named by env sid" '[[ -e "$CACHE/context-warn-envsid66" ]]'
+assert_true "T-66: handoff also named by env sid" '[[ -e "$CACHE/handoff-envsid66.json" ]]'
+
+# --- T-67: safe_sid parity: env-valid + stdin-different -> env wins
+cleanup
+make_transcript "$FIX/t67.jsonl" "$TOK_300K"
+printf '%s' '{"session_id":"stdin67","transcript_path":"'"$FIX/t67.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' | CLAUDE_CONTEXT_WARN_TOKENS=1 CLAUDE_CODE_SESSION_ID="env67" HOME="$SANDBOX_HOME" bash "$STOP_HOOK" >/dev/null 2>&1
+assert_true "T-67: env wins -> flag named by env sid" '[[ -e "$CACHE/context-warn-env67" ]]'
+assert_true "T-67: stdin sid NOT used" '[[ ! -e "$CACHE/context-warn-stdin67" ]]'
+
+# --- T-68: safe_sid parity: env-invalid + stdin-valid -> stdin used
+cleanup
+make_transcript "$FIX/t68.jsonl" "$TOK_300K"
+printf '%s' '{"session_id":"stdin68","transcript_path":"'"$FIX/t68.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' | CLAUDE_CONTEXT_WARN_TOKENS=1 CLAUDE_CODE_SESSION_ID="bad/sid" HOME="$SANDBOX_HOME" bash "$STOP_HOOK" >/dev/null 2>&1
+assert_true "T-68: env invalid -> stdin sid used" '[[ -e "$CACHE/context-warn-stdin68" ]]'
+
+# --- T-69: safe_sid parity: both invalid -> skip (no handoff, no flag)
+cleanup
+make_transcript "$FIX/t69.jsonl" "$TOK_300K"
+printf '%s' '{"session_id":"../evil","transcript_path":"'"$FIX/t69.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' | CLAUDE_CONTEXT_WARN_TOKENS=1 CLAUDE_CODE_SESSION_ID="" HOME="$SANDBOX_HOME" bash "$STOP_HOOK" >/dev/null 2>&1
+ANY69=$(find "$CACHE" -type f \( -name 'context-warn-*' -o -name 'handoff-*' \) 2>/dev/null | head -1)
+assert_eq "T-69: both invalid sid -> nothing written" "" "$ANY69"
+
 else
-  SKIPPED=60
+  SKIPPED=74
 fi  # STOP_FIXTURE_OK
 
 # ===================================================================

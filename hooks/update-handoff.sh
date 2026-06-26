@@ -29,21 +29,29 @@ else
   exit 0
 fi
 
-# Extract session_id, transcript_path, cwd from stdin JSON.
+# Extract session_id (env-first), transcript_path, cwd from stdin JSON.
 EXTRACTED=$(printf '%s' "$STDIN_JSON" | "$PY" -c "
-import sys, json, hashlib, re
+import sys, json, re, os
 try:
     d = json.load(sys.stdin)
-    sid = d.get('session_id', '') or ''
+    sid_stdin = d.get('session_id', '') or ''
     tp = d.get('transcript_path', '') or ''
     cwd = d.get('cwd', '') or ''
 except Exception:
-    sid = ''; tp = ''; cwd = ''
+    sid_stdin = ''; tp = ''; cwd = ''
 
-if sid and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', sid):
-    safe = sid
-elif sid:
-    safe = hashlib.sha1(sid.encode('utf-8')).hexdigest()
+# Shared SAFE_SID derivation (must match check-context-size.sh exactly):
+# \$CLAUDE_CODE_SESSION_ID first, then stdin session_id, both via the same
+# regex. SHA-1 fallback dropped in v3.1 -> invalid id skips (no handoff, no
+# flag). Real session ids are UUIDs, always regex-valid; parity matters because
+# Stop writes context-warn-<safe> / handoff-<safe>.json and UPS reads them.
+sid_env = os.environ.get('CLAUDE_CODE_SESSION_ID', '') or ''
+def _valid(s):
+    return bool(s) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', s) is not None
+if _valid(sid_env):
+    safe = sid_env
+elif _valid(sid_stdin):
+    safe = sid_stdin
 else:
     safe = ''
 print(safe)
@@ -485,6 +493,83 @@ for attempt in (1, 2):
         try: os.unlink(tmp_path)
         except OSError: pass
         sys.exit(0)
+
+# --- v3.1: write/clear the context-warn flag (Stop owns it; UPS reads it). ---
+# Reached only after a successful handoff replace (every failure path above
+# sys.exit's) and only when the mtime-guard did NOT skip this run, so a stale
+# async Stop never touches the flag. Reuse the already-parsed tail.
+def _newest_assistant_tokens(entries):
+    for e in reversed(entries):
+        if e.get('isSidechain') is True:
+            continue
+        if e.get('isApiErrorMessage') is True:
+            continue
+        m = e.get('message')
+        if not isinstance(m, dict) or m.get('role') != 'assistant':
+            continue
+        u = m.get('usage')
+        if not isinstance(u, dict):
+            continue
+        it = u.get('input_tokens')
+        if not isinstance(it, int):
+            continue
+        cc = u.get('cache_creation_input_tokens') or 0
+        cr = u.get('cache_read_input_tokens') or 0
+        if not isinstance(cc, int) or not isinstance(cr, int):
+            continue
+        return it + cc + cr
+    return None
+
+_tokens = _newest_assistant_tokens(parsed)
+
+# Threshold validation moved here from check-context-size.sh (UPS now reads the
+# Stop-validated threshold from the flag). Same regex as the old UPS check.
+_thr_raw = os.environ.get('CLAUDE_CONTEXT_WARN_TOKENS', '') or ''
+if re.fullmatch(r'0|[1-9][0-9]*', _thr_raw):
+    _threshold = int(_thr_raw)
+else:
+    if _thr_raw:
+        print(f'update-handoff: ignoring invalid CLAUDE_CONTEXT_WARN_TOKENS={_thr_raw!r}; using 450000.', file=sys.stderr)
+    _threshold = 450000
+
+_flag_path = os.path.join(handoff_dir, f'context-warn-{safe_sid}')
+
+# Pre-flag freshness re-check: a newer Stop may have replaced the handoff
+# between this run's mtime-guard check and now. If the on-disk handoff is newer
+# than our transcript, skip so a stale run cannot write a stale flag. This
+# narrows but does not fully close the window (a newer run could still interleave
+# between this check and the write below); fully closing it needs a per-session
+# lock, not worth it for a soft "consider compacting" nudge.
+try:
+    with open(handoff_path, 'r', encoding='utf-8') as _f:
+        _cur = json.load(_f)
+    _cmt = _cur.get('transcript_mtime_at_write')
+    if isinstance(_cmt, (int, float)) and _cmt > transcript_mtime:
+        sys.exit(0)
+except Exception:
+    pass
+
+if _tokens is not None and _tokens >= _threshold:
+    # Atomic flag write (tempfile + os.replace, trailing newline) so a crash
+    # never leaves a partial flag the UPS reader would misparse.
+    try:
+        _ffd, _ftmp = tempfile.mkstemp(
+            dir=handoff_dir, prefix=f'context-warn-{safe_sid}-', suffix='.tmp')
+        try:
+            with os.fdopen(_ffd, 'w', encoding='utf-8') as _f:
+                _f.write(f'{_tokens} {_threshold}\n')
+            os.replace(_ftmp, _flag_path)
+        except OSError:
+            try: os.unlink(_ftmp)
+            except OSError: pass
+    except OSError:
+        pass
+else:
+    # Below threshold (or no usable usage) -> clear the flag (re-arm after /compact).
+    try:
+        os.unlink(_flag_path)
+    except OSError:
+        pass
 
 sys.exit(0)
 PYEOF
