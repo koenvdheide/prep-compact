@@ -4,6 +4,18 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.3] - 2026-06-26
+
+### Changed
+
+- The Stop hook now runs asynchronously, so the handoff write no longer blocks the end of a turn.
+- The UserPromptSubmit hook merges its stdin parse and transcript tail-scan into a single Python process, removing one interpreter cold-start per message (the dominant per-message cost on Windows).
+
+### Fixed
+
+- The UserPromptSubmit hook converts the transcript path with `cygpath` first on Git Bash, matching the pre-merge behaviour. A direct existence check could otherwise resolve a POSIX path such as `/tmp/x` to a drive-relative `C:\tmp\x` and scan the wrong file.
+- With the Stop hook now asynchronous, it compares the on-disk handoff's `transcript_mtime_at_write` before replacing the handoff and skips the write when the existing file is newer, so a slow run cannot overwrite a fresher handoff from a later turn.
+
 ## [3.0.2] - 2026-06-05
 
 ### Fixed
