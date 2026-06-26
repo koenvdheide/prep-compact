@@ -451,6 +451,22 @@ if os.environ.get('PREP_COMPACT_TEST_REPLACE_FAIL'):
     except OSError: pass
     sys.exit(0)
 
+# Async-write ordering guard: with the Stop hook now async, a slower run for
+# the same session can resume after a newer run already replaced the handoff.
+# os.replace prevents partial reads but not last-writer-wins reordering, so skip
+# the replace when the on-disk handoff's transcript_mtime_at_write is newer than
+# this run's (a stale run must not clobber a fresher handoff). Fail-open.
+try:
+    if os.path.exists(handoff_path):
+        with open(handoff_path, 'r', encoding='utf-8') as f:
+            _existing = json.load(f)
+        _emt = _existing.get('transcript_mtime_at_write')
+        if isinstance(_emt, (int, float)) and _emt > transcript_mtime:
+            os.unlink(tmp_path)
+            sys.exit(0)
+except Exception:
+    pass
+
 # Replace with one retry on PermissionError (Windows: target held open).
 for attempt in (1, 2):
     try:

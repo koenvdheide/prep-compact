@@ -91,7 +91,7 @@ fi
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
 #   PR-comment fix: +3 Stop-dep (T-32cap +1 short-still-captured, T-32prior +2)
-EXPECTED_PASS=130
+EXPECTED_PASS=131
 SKIPPED=0
 
 run_hook() {
@@ -666,6 +666,22 @@ HANDOFF=$(to_native "$CACHE/handoff-s38p.json")
 PRIOR_INTACT=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print('yes' if 'SENTINEL/prior.ts' in d.get('cumulative_files',[]) else 'no')")
 assert_eq "T-38p: simulated replace fail -> prior preserved (sentinel intact)" "yes" "$PRIOR_INTACT"
 assert_true "T-38p: stderr warning printed on simulated fail" '[[ "$ERR" == *"replace failed twice, prior preserved"* ]]'
+
+# --- T-38g: async ordering guard — a newer on-disk handoff is NOT clobbered by an older run.
+# Pre-write a handoff with a far-future transcript_mtime_at_write; the run (whose
+# fixture transcript has a normal mtime) must SKIP the replace, leaving the
+# sentinel written_at untouched. Distinguishes the guard from cumulative_files
+# merge (which would preserve prior entries even on a write).
+cleanup
+"$PY" -c "
+import json
+prior = {'version':'3.0','session_id':'s38g','cwd':'/sample/cwd','transcript_path':'/x','transcript_mtime_at_write':9999999999.0,'written_at':'2099-01-01T00:00:00Z','cumulative_files':[],'recent_files':[],'in_progress_status':'unknown','in_progress':[],'recent_task_launches':[],'recent_user_requests':[]}
+with open('$(to_native "$CACHE/handoff-s38g.json")','w') as f: json.dump(prior, f)
+"
+run_stop_hook '{"session_id":"s38g","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF=$(to_native "$CACHE/handoff-s38g.json")
+WRITTEN_AT=$("$PY" -c "import json; d=json.load(open('$HANDOFF')); print(d.get('written_at',''))")
+assert_eq "T-38g: newer on-disk handoff preserved (guard skips stale replace)" "2099-01-01T00:00:00Z" "$WRITTEN_AT"
 
 # T-52: file noise filter — .git/temp/plugin-data excluded, real path kept
 cleanup
