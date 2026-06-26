@@ -48,7 +48,9 @@ FLAG="$CACHE_DIR/compact-warned-$SID"
 # Flag present AND parses as two integers -> a real crossing. A malformed or
 # partial flag (crash mid-write, etc.) is treated as absent so it never sticks
 # the suppression on. Absent/malformed -> clear the suppression flag (re-arm).
-if [[ -e "$WARN" ]] && read -r TOKENS THRESHOLD _REST < "$WARN" 2>/dev/null \
+# IFS includes \r so a CRLF-terminated flag still parses (defensive: the writer
+# emits LF, but a text-mode write elsewhere must not silently break the parse).
+if [[ -e "$WARN" ]] && IFS=$' \t\r' read -r TOKENS THRESHOLD _REST < "$WARN" 2>/dev/null \
      && [[ "$TOKENS" =~ ^[0-9]+$ && "$THRESHOLD" =~ ^[0-9]+$ ]]; then
   # Already warned this crossing -> suppress.
   [[ -e "$FLAG" ]] && exit 0
