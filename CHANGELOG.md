@@ -4,6 +4,26 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-06-27
+
+### Changed
+
+- The UserPromptSubmit hook is now pure bash: it reads a small per-session flag file the Stop hook writes, instead of spawning Python to tail-scan the transcript on every message. Token detection moved into the (already async) Stop hook, so the per-message path no longer pays an interpreter cold-start or a 256 KB scan.
+- Both hooks resolve the session id from `$CLAUDE_CODE_SESSION_ID` first (present in the hook environment, though undocumented), falling back to the stdin `session_id`. The SHA-1 fallback for non-conforming ids is dropped: an id that fails the `^[A-Za-z0-9_-]{1,64}$` check is skipped (no flag, no handoff). Real session ids are UUIDs, always regex-valid.
+
+### Added
+
+- **`context-warn-<safe_sid>`** flag file under `${CLAUDE_PLUGIN_DATA}`: the Stop hook writes it (`<tokens> <threshold>`, atomically) when the newest main-chain assistant usage is at or above the threshold, and removes it below. The UserPromptSubmit hook reads it, emits the existing reminder once per crossing, and re-arms when it is absent or malformed.
+
+### Fixed
+
+- The Stop hook re-checks the on-disk handoff's `transcript_mtime_at_write` immediately before touching the flag, so a stale async run does not write a stale flag over a fresher one. A residual race remains (closing it fully would need a per-session lock) and is documented in the hook.
+- The flag is written with a trailing LF (a Windows CRLF would leave a stray carriage return that breaks the bash reader's integer parse); the reader also tolerates CRLF defensively.
+
+### Notes
+
+- The warning now depends on the Stop hook having written the flag. If Stop is killed, disabled, or errors, an above-threshold session gets no nudge until a later successful Stop. This extends the existing handoff-depends-on-Stop coupling to the warning; the user can also run `/prep-compact:prep-compact` directly. (Earlier copy described the timing as identical to the old per-message scan; that holds only when Stop runs successfully before the next message.)
+
 ## [3.0.3] - 2026-06-26
 
 ### Changed
