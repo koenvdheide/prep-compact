@@ -93,8 +93,9 @@ fi
 #   PR-comment fix: +3 Stop-dep (T-32cap +1 short-still-captured, T-32prior +2)
 #   v3.1 Task 1: +15 Stop-dep (T-24 +1, T-60..T-69 +14)
 #   v3.1 Task 2: UPS tests flag-driven (-48 old +37 new, non-Stop); +5 Stop-dep (T-70..T-74)
-#   -> EXPECTED_PASS 140; SKIPPED 79 when stop-real.json fixture missing
-EXPECTED_PASS=140
+#   v3.1 Task 3: +2 non-Stop (T-86), +6 Stop-dep (T-87 x4, T-88 x2)
+#   -> EXPECTED_PASS 148; SKIPPED 85 when stop-real.json fixture missing
+EXPECTED_PASS=148
 SKIPPED=0
 
 # CLAUDE_CODE_SESSION_ID is cleared so the UPS hook's env-first safe_sid
@@ -186,6 +187,14 @@ cleanup
 OUT=$(run_hook '{"session_id":"s2"}')
 assert_eq "T-2: no warn flag -> silent" "" "$OUT"
 assert_true "T-2: stale compact-warned cleared" '[[ ! -e "$CACHE/compact-warned-s2" ]]'
+
+# --- T-86: Stop-state-absent -> UPS silent (the accepted v3.1 coupling regression)
+cleanup
+# Stop never ran: no context-warn flag at all. UPS stays silent and creates no
+# compact-warned. The warning depends on Stop having written the flag.
+OUT=$(run_hook '{"session_id":"s86"}')
+assert_eq "T-86: Stop-state-absent -> UPS silent" "" "$OUT"
+assert_true "T-86: Stop-state-absent -> no compact-warned created" '[[ ! -e "$CACHE/compact-warned-s86" ]]'
 
 # --- T-80: warn flag present + already warned -> suppressed (silent)
 cleanup
@@ -872,8 +881,41 @@ make_transcript "$FIX/t74.jsonl" "$EARLIER_VALID" "$OVERSIZED"
 CLAUDE_CONTEXT_WARN_TOKENS=1 run_stop_hook '{"session_id":"s74","transcript_path":"'"$FIX/t74.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
 assert_true "T-74: oversized straddling last record -> no context-warn flag" '[[ ! -e "$CACHE/context-warn-s74" ]]'
 
+# --- Stop+UPS integration: re-arm and stale-Stop race (red-team edge cases) ---
+
+# --- T-87: delayed clear after /compact -> Stop clears flag -> UPS re-arms
+cleanup
+make_transcript "$FIX/t87.jsonl" "$TOK_300K"
+CLAUDE_CONTEXT_WARN_TOKENS=200000 run_stop_hook '{"session_id":"s87","transcript_path":"'"$FIX/t87.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+OUT=$(run_hook '{"session_id":"s87"}')
+assert_true "T-87: step1 Stop wrote flag -> UPS warns" '[[ "$OUT" == *"prep-compact"* ]]'
+# /compact: transcript shrinks below threshold; a later Stop clears the flag.
+SMALL_50K='{"message":{"role":"assistant","usage":{"input_tokens":5,"cache_creation_input_tokens":50000,"cache_read_input_tokens":0}}}'
+make_transcript "$FIX/t87.jsonl" "$SMALL_50K"
+CLAUDE_CONTEXT_WARN_TOKENS=200000 run_stop_hook '{"session_id":"s87","transcript_path":"'"$FIX/t87.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_true "T-87: step2 below-threshold Stop cleared flag" '[[ ! -e "$CACHE/context-warn-s87" ]]'
+OUT=$(run_hook '{"session_id":"s87"}')
+assert_eq "T-87: step3 UPS silent after clear" "" "$OUT"
+assert_true "T-87: step3 compact-warned cleared (re-armed)" '[[ ! -e "$CACHE/compact-warned-s87" ]]'
+
+# --- T-88: stale Stop must not clear a newer flag (mtime-guard covers clears too)
+cleanup
+# A newer Stop already ran (future-mtime handoff) and a fresh flag is present.
+# A STALE Stop (old transcript, below-threshold tokens) would clear the flag if
+# it proceeded; the mtime-guard skips it, so the newer flag stays intact.
+make_transcript "$FIX/t88.jsonl" "$SMALL_50K"
+"$PY" -c "
+import json
+newer = {'version':'3.0','session_id':'s88','cwd':'/x','transcript_path':'/x','transcript_mtime_at_write':9999999999.0,'written_at':'2099-01-01T00:00:00Z','cumulative_files':[],'recent_files':[],'in_progress_status':'unknown','in_progress':[],'recent_task_launches':[],'recent_user_requests':[]}
+open('$(to_native "$CACHE/handoff-s88.json")','w').write(json.dumps(newer))
+"
+printf '300000 200000\n' > "$CACHE/context-warn-s88"
+CLAUDE_CONTEXT_WARN_TOKENS=200000 run_stop_hook '{"session_id":"s88","transcript_path":"'"$FIX/t88.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_true "T-88: stale Stop does not clear a newer flag" '[[ -e "$CACHE/context-warn-s88" ]]'
+assert_eq "T-88: newer flag content intact" "300000 200000" "$(cat "$CACHE/context-warn-s88" 2>/dev/null)"
+
 else
-  SKIPPED=79
+  SKIPPED=85
 fi  # STOP_FIXTURE_OK
 
 # ===================================================================

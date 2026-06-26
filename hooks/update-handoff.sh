@@ -556,7 +556,10 @@ if _tokens is not None and _tokens >= _threshold:
         _ffd, _ftmp = tempfile.mkstemp(
             dir=handoff_dir, prefix=f'context-warn-{safe_sid}-', suffix='.tmp')
         try:
-            with os.fdopen(_ffd, 'w', encoding='utf-8') as _f:
+            # newline='' so the LF is not translated to CRLF on Windows text
+            # mode: bash `read` in check-context-size.sh would otherwise leave a
+            # trailing \r on THRESHOLD and reject the flag as malformed.
+            with os.fdopen(_ffd, 'w', encoding='utf-8', newline='') as _f:
                 _f.write(f'{_tokens} {_threshold}\n')
             os.replace(_ftmp, _flag_path)
         except OSError:
