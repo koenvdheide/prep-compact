@@ -91,21 +91,27 @@ fi
 #   After T6: EXPECTED_PASS=87, SKIPPED=39   (T6 tests not Stop-dep)
 #   After T7: EXPECTED_PASS=88, SKIPPED=39   (T7 test not Stop-dep)
 #   PR-comment fix: +3 Stop-dep (T-32cap +1 short-still-captured, T-32prior +2)
-#   v3.1 Task 1: +15 Stop-dep (T-24 +1, T-60..T-69 +14) -> EXPECTED_PASS 146, SKIPPED 74 when fixture missing
-EXPECTED_PASS=146
+#   v3.1 Task 1: +15 Stop-dep (T-24 +1, T-60..T-69 +14)
+#   v3.1 Task 2: UPS tests flag-driven (-48 old +37 new, non-Stop); +5 Stop-dep (T-70..T-74)
+#   -> EXPECTED_PASS 140; SKIPPED 79 when stop-real.json fixture missing
+EXPECTED_PASS=140
 SKIPPED=0
 
+# CLAUDE_CODE_SESSION_ID is cleared so the UPS hook's env-first safe_sid
+# derivation falls through to the stdin session_id these tests supply (the real
+# session id leaks into the harness env otherwise). Env-first behaviour is
+# exercised by calling the hook directly with the var set (T-84/T-85).
 run_hook() {
   local stdin=$1; shift
-  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" bash "$HOOK" "$@" 2>/dev/null
+  printf '%s' "$stdin" | CLAUDE_CODE_SESSION_ID= HOME="$SANDBOX_HOME" bash "$HOOK" "$@" 2>/dev/null
 }
 
-# Variant that preserves stderr so tests can capture warn messages. T-14 and
-# T-15 need this because run_hook above silences stderr by design to keep
-# expected-silent tests clean.
+# Variant that preserves stderr so tests can capture warn messages. T-14 needs
+# this because run_hook above silences stderr by design to keep expected-silent
+# tests clean.
 run_hook_err() {
   local stdin=$1; shift
-  printf '%s' "$stdin" | HOME="$SANDBOX_HOME" bash "$HOOK" "$@"
+  printf '%s' "$stdin" | CLAUDE_CODE_SESSION_ID= HOME="$SANDBOX_HOME" bash "$HOOK" "$@"
 }
 
 assert_eq() {
@@ -155,204 +161,178 @@ to_native() {
   fi
 }
 
-# --- T-1: token count above threshold -> reminder fires with token message
-cleanup
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s1","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
-assert_true "T-1: above threshold -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
-assert_true "T-1: message names tokens not bytes" '[[ "$OUT" == *"tokens"* ]] && [[ "$OUT" != *"bytes"* ]]'
-assert_true "T-1: flag file written" '[[ -e "$CACHE/compact-warned-s1" ]]'
-# T-1 additional regression: reminder must NOT use the v2.x "Invoke the prep-compact skill" directive
-assert_true "T-1: reminder NO longer says 'Invoke the prep-compact skill' (v3 informational)" '[[ "$OUT" != *"Invoke the prep-compact skill"* ]]'
+# ============================================================
+# v3.1: UserPromptSubmit hook is a pure-bash context-warn reader.
+# Token detection now lives in the Stop hook (T-60.., T-70..); these tests
+# pre-write the flag and assert reminder / suppression / re-arm. No transcript.
+# ============================================================
 
-# --- T-2: token count below threshold with stale flag -> silent + flag cleared
+write_warn() {  # $1=sid  $2=tokens  $3=threshold
+  printf '%s %s\n' "$2" "$3" > "$CACHE/context-warn-$1"
+}
+
+# --- T-1: warn flag present -> reminder fires, names tokens, sets compact-warned
+cleanup
+write_warn s1 250000 200000
+OUT=$(run_hook '{"session_id":"s1"}')
+assert_true "T-1: flag present -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
+assert_true "T-1: message names tokens not bytes" '[[ "$OUT" == *"250000 tokens"* ]] && [[ "$OUT" != *"bytes"* ]]'
+assert_true "T-1: compact-warned flag written" '[[ -e "$CACHE/compact-warned-s1" ]]'
+assert_true "T-1: reminder NOT the v2.x 'Invoke the prep-compact skill' directive" '[[ "$OUT" != *"Invoke the prep-compact skill"* ]]'
+
+# --- T-2: warn flag absent -> silent, stale compact-warned cleared (re-arm)
 cleanup
 : >"$CACHE/compact-warned-s2"
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=300000 run_hook '{"session_id":"s2","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
-assert_eq "T-2: below threshold -> silent" "" "$OUT"
-assert_true "T-2: stale flag cleared" '[[ ! -e "$CACHE/compact-warned-s2" ]]'
+OUT=$(run_hook '{"session_id":"s2"}')
+assert_eq "T-2: no warn flag -> silent" "" "$OUT"
+assert_true "T-2: stale compact-warned cleared" '[[ ! -e "$CACHE/compact-warned-s2" ]]'
 
-# --- T-3: isSidechain: true is newest usage line -> earlier main-chain line used
+# --- T-80: warn flag present + already warned -> suppressed (silent)
 cleanup
-MAIN_A='{"message":{"role":"assistant","usage":{"input_tokens":5,"cache_creation_input_tokens":99995,"cache_read_input_tokens":0}}}'
-SIDECHAIN='{"isSidechain":true,"message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":888888,"cache_read_input_tokens":0}}}'
-make_transcript "$FIX/t3.jsonl" "$MAIN_A" "$SIDECHAIN"
-# MAIN_A sums to 100000; sidechain-skip means token path returns 100000.
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=50000 run_hook '{"session_id":"s3","transcript_path":"'"$FIX/t3.jsonl"'"}')
-assert_true "T-3: sidechain skipped, earlier main-chain used, reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
-assert_true "T-3: reminder reports N=100000 not sidechain huge value" '[[ "$OUT" == *"100000"* ]]'
+write_warn s80 300000 200000
+: >"$CACHE/compact-warned-s80"
+OUT=$(run_hook '{"session_id":"s80"}')
+assert_eq "T-80: already warned -> silent" "" "$OUT"
 
-# --- T-4: isApiErrorMessage: true is newest usage line -> earlier main-chain line used
+# --- T-81: malformed flag (empty) -> treated as absent, re-arm, silent
 cleanup
-API_ERR='{"isApiErrorMessage":true,"message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":999999,"cache_read_input_tokens":0}}}'
-make_transcript "$FIX/t4.jsonl" "$MAIN_A" "$API_ERR"
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=50000 run_hook '{"session_id":"s4","transcript_path":"'"$FIX/t4.jsonl"'"}')
-assert_true "T-4: api-error skipped, earlier main-chain used, reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
-assert_true "T-4: reminder reports N=100000 not api-error huge value" '[[ "$OUT" == *"100000"* ]]'
+: >"$CACHE/context-warn-s81"
+: >"$CACHE/compact-warned-s81"
+OUT=$(run_hook '{"session_id":"s81"}')
+assert_eq "T-81: empty flag -> silent" "" "$OUT"
+assert_true "T-81: empty flag treated as absent -> compact-warned cleared" '[[ ! -e "$CACHE/compact-warned-s81" ]]'
 
-# --- T-5: no .message.usage in file (pre-first-turn) -> silent, no flag
+# --- T-82: malformed flag (non-int field) -> treated as absent, silent
 cleanup
-USER_MSG='{"message":{"role":"user","content":"hello"}}'
-make_transcript "$FIX/t5.jsonl" "$USER_MSG"
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"s5","transcript_path":"'"$FIX/t5.jsonl"'"}')
-assert_eq "T-5: pre-first-turn -> silent" "" "$OUT"
-assert_true "T-5: no flag written" '[[ ! -e "$CACHE/compact-warned-s5" ]]'
+printf 'garbage here\n' > "$CACHE/context-warn-s82"
+OUT=$(run_hook '{"session_id":"s82"}')
+assert_eq "T-82: non-int flag -> silent" "" "$OUT"
 
-# --- T-6: malformed last usage line -> earlier valid line used
+# --- T-83: malformed flag (single int, missing threshold) -> treated as absent, silent
 cleanup
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s6","transcript_path":"'"$FIX/transcript-malformed-tail.jsonl"'"}')
-assert_true "T-6: malformed tail skipped, earlier valid line used" '[[ "$OUT" == *"prep-compact"* ]]'
-assert_true "T-6: reminder reports N=250010" '[[ "$OUT" == *"250010"* ]]'
+printf '300000\n' > "$CACHE/context-warn-s83"
+OUT=$(run_hook '{"session_id":"s83"}')
+assert_eq "T-83: partial flag -> silent" "" "$OUT"
 
-# --- T-7: missing transcript_path -> silent
-cleanup
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"s7","transcript_path":"/nonexistent/path/xyz.jsonl"}')
-assert_eq "T-7: missing transcript_path -> silent" "" "$OUT"
-assert_true "T-7: no flag written" '[[ ! -e "$CACHE/compact-warned-s7" ]]'
-
-# --- T-8: empty stdin -> silent
+# --- T-8: empty stdin + no env sid -> silent (fail-open)
 cleanup
 OUT=$(run_hook '' 2>/dev/null)
 assert_eq "T-8: empty stdin -> silent" "" "$OUT"
 
-# --- T-9: malformed stdin JSON -> silent
+# --- T-9: malformed stdin JSON + no env sid -> silent
 cleanup
 OUT=$(run_hook '{not valid json' 2>/dev/null)
 assert_eq "T-9: malformed stdin -> silent" "" "$OUT"
 
-# --- T-10: path traversal session_id -> no flag escapes cache dir
+# --- T-10: path traversal sid -> invalid regex -> skip, no escaped flag
 cleanup
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"../../../evil","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}' 2>/dev/null)
+OUT=$(run_hook '{"session_id":"../../../evil"}' 2>/dev/null)
 ESCAPED=$(find "$SANDBOX_HOME/.claude" -path "$CACHE" -prune -o -name 'compact-warned-*' -print 2>/dev/null | head -n 1)
 assert_eq "T-10: path traversal -> no escaped flag" "" "$ESCAPED"
 
-# --- T-11: oversized session_id -> SHA-1 hex fallback
+# --- T-11: oversized sid -> skip (v3.1 drops the SHA-1 fallback)
 cleanup
 LONG=$(printf 'a%.0s' {1..200})
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook "{\"session_id\":\"$LONG\",\"transcript_path\":\"$FIX/transcript-usage.jsonl\"}" 2>/dev/null)
-assert_true "T-11: oversized sid -> raw name NOT used" '[[ ! -e "$CACHE/compact-warned-$LONG" ]]'
-SHA1=$("$PY" -c "import hashlib; print(hashlib.sha1(b'$LONG').hexdigest())")
-assert_true "T-11: oversized sid -> hash flag created" '[[ -e "$CACHE/compact-warned-$SHA1" ]]'
+OUT=$(run_hook "{\"session_id\":\"$LONG\"}" 2>/dev/null)
+assert_eq "T-11: oversized sid -> silent" "" "$OUT"
+ANY=$(find "$CACHE" -name 'compact-warned-*' 2>/dev/null | head -n 1)
+assert_eq "T-11: oversized sid -> no compact-warned written" "" "$ANY"
 
-# --- T-12: empty session_id -> silent, no flag
+# --- T-12: empty sid (env unset, stdin empty) -> silent, no flag
 cleanup
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}' 2>/dev/null)
+OUT=$(run_hook '{"session_id":""}' 2>/dev/null)
 assert_eq "T-12: empty sid -> silent" "" "$OUT"
-ANY_FLAG=$(find "$CACHE" -name 'compact-warned-*' 2>/dev/null | head -n 1)
-assert_eq "T-12: empty sid -> no flag created" "" "$ANY_FLAG"
+ANY=$(find "$CACHE" -name 'compact-warned-*' 2>/dev/null | head -n 1)
+assert_eq "T-12: empty sid -> no flag created" "" "$ANY"
 
-# --- T-13: CLAUDE_PLUGIN_DATA override -> flag written there
+# --- T-13: CLAUDE_PLUGIN_DATA override -> reads flag there, writes compact-warned there
 cleanup
 OVERRIDE_DIR="$TEST_DIR/alt-cache"
-mkdir -p "$OVERRIDE_DIR"
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 CLAUDE_PLUGIN_DATA="$OVERRIDE_DIR" run_hook '{"session_id":"s13","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}' 2>/dev/null)
-assert_true "T-13: override dir -> flag written there" '[[ -e "$OVERRIDE_DIR/compact-warned-s13" ]]'
-assert_true "T-13: override dir -> no flag in fallback cache" '[[ ! -e "$CACHE/compact-warned-s13" ]]'
+rm -rf "$OVERRIDE_DIR"; mkdir -p "$OVERRIDE_DIR"
+printf '300000 1\n' > "$OVERRIDE_DIR/context-warn-s13"
+OUT=$(CLAUDE_PLUGIN_DATA="$OVERRIDE_DIR" run_hook '{"session_id":"s13"}' 2>/dev/null)
+assert_true "T-13: override dir -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
+assert_true "T-13: override dir -> compact-warned written there" '[[ -e "$OVERRIDE_DIR/compact-warned-s13" ]]'
 
 # --- T-14: mkdir failure on cache dir -> stderr warn, hook disabled this turn
 cleanup
-# Point CLAUDE_PLUGIN_DATA at a path whose parent is a regular file,
-# making mkdir -p fail. Create a file to serve as the obstruction.
-OBSTRUCTION="$TEST_DIR/obstructed"
+OBSTRUCTION="$TEST_DIR/obstructed-ups"
 printf 'not a dir\n' >"$OBSTRUCTION"
-# Use run_hook_err to preserve stderr for the warn-message assertion.
-ERR=$(CLAUDE_CONTEXT_WARN_TOKENS=1 CLAUDE_PLUGIN_DATA="$OBSTRUCTION/nope" run_hook_err '{"session_id":"s14","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}' 2>&1 >/dev/null)
+ERR=$(CLAUDE_PLUGIN_DATA="$OBSTRUCTION/nope" run_hook_err '{"session_id":"s14"}' 2>&1 >/dev/null)
 assert_true "T-14: mkdir failure -> stderr warn" '[[ "$ERR" == *"cannot create"* ]]'
 
-# --- T-15: bad CLAUDE_CONTEXT_WARN_TOKENS -> default substituted, stderr warn
-for BAD in "not-a-number" "08" "3.14" "-1"; do
-  cleanup
-  # Use run_hook_err to capture stderr for the warn-message assertion.
-  ERR=$(CLAUDE_CONTEXT_WARN_TOKENS="$BAD" run_hook_err '{"session_id":"s15","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}' 2>&1 >/dev/null)
-  assert_true "T-15[$BAD]: invalid env -> stderr warn 'ignoring invalid'" '[[ "$ERR" == *"ignoring invalid"* ]]'
-  # Default 450000 > 250000 fixture -> silent (no reminder on stdout)
-  OUT=$(CLAUDE_CONTEXT_WARN_TOKENS="$BAD" run_hook '{"session_id":"s15b","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}' 2>/dev/null)
-  assert_eq "T-15[$BAD]: default 450000 substituted -> silent on 250000 fixture" "" "$OUT"
-done
-
-# --- T-16: raise threshold above current N -> stale flag cleared
+# --- T-16: re-arm via flag transitions (flag present -> gone -> compact-warned cleared)
 cleanup
-# First fire: TOKENS=100000 < N=250000 -> flag written
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=100000 run_hook '{"session_id":"s16","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
-assert_true "T-16: initial fire -> flag written" '[[ -e "$CACHE/compact-warned-s16" ]]'
-# Raise threshold above N
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=500000 run_hook '{"session_id":"s16","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
-assert_true "T-16: raised threshold -> stale flag cleared" '[[ ! -e "$CACHE/compact-warned-s16" ]]'
+write_warn s16 250000 200000
+OUT=$(run_hook '{"session_id":"s16"}')
+assert_true "T-16: flag present -> compact-warned set" '[[ -e "$CACHE/compact-warned-s16" ]]'
+rm -f "$CACHE/context-warn-s16"
+OUT=$(run_hook '{"session_id":"s16"}')
+assert_true "T-16: flag gone -> compact-warned cleared" '[[ ! -e "$CACHE/compact-warned-s16" ]]'
 
-# --- T-17: role != 'assistant' is newest -> earlier assistant line used
-cleanup
-USER_WITH_USAGE='{"message":{"role":"user","usage":{"input_tokens":10,"cache_creation_input_tokens":888888,"cache_read_input_tokens":0}}}'
-make_transcript "$FIX/t17.jsonl" "$MAIN_A" "$USER_WITH_USAGE"
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=50000 run_hook '{"session_id":"s17","transcript_path":"'"$FIX/t17.jsonl"'"}')
-assert_true "T-17: non-assistant usage skipped, earlier assistant used" '[[ "$OUT" == *"prep-compact"* ]]'
-assert_true "T-17: reminder reports main-chain N=100000" '[[ "$OUT" == *"100000"* ]]'
-
-# --- T-18: oversized last line > tail cap -> silent no-op (not a rescue)
-# Codex r2 flagged that a single JSONL record > 256 KB at the end of the
-# transcript straddles the tail cap. Our tail window contains only a
-# mid-string slice of that oversized record; prior lines are outside the
-# window and NOT recoverable. Correct behavior: silent no-op. This test
-# guards that we fail-open (not crash, not return garbage).
-cleanup
-EARLIER_VALID='{"message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":123446,"cache_read_input_tokens":0}}}'
-PAD=$("$PY" -c "print('A' * 300000)")  # 300 KB of A pushes the record past the 256 KB tail cap
-OVERSIZED="{\"message\":{\"role\":\"assistant\",\"content\":\"$PAD\",\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":50000,\"cache_read_input_tokens\":0}}}"
-make_transcript "$FIX/t18.jsonl" "$EARLIER_VALID" "$OVERSIZED"
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"s18","transcript_path":"'"$FIX/t18.jsonl"'"}')
-assert_eq "T-18: oversized straddling last record -> silent no-op" "" "$OUT"
-
-# --- T-19: real UserPromptSubmit payload shape parity
-# Exercises the live-captured UPS stdin fixture so stdin-shape regressions are
-# caught. Swaps the real transcript_path with a known token-bearing fixture
-# so the test is deterministic across machines.
+# --- T-19: real UserPromptSubmit payload shape -> stdin session_id parsed, reminder fires
 cleanup
 if [[ -s "$FIX/ups-real.json" ]]; then
-  cp "$FIX/transcript-usage.jsonl" "$FIX/real-standin.jsonl"
-  REAL_JSON=$("$PY" -c "import json,sys; d=json.load(sys.stdin); d['transcript_path']='$FIX/real-standin.jsonl'; print(json.dumps(d, separators=(',', ':')))" <"$FIX/ups-real.json")
-  OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook "$REAL_JSON")
-  assert_true "T-19: real UPS payload -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
+  REAL_SID=$("$PY" -c "import json,sys; print(json.load(sys.stdin).get('session_id',''))" <"$FIX/ups-real.json")
+  if [[ "$REAL_SID" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+    write_warn "$REAL_SID" 300000 1
+    OUT=$(run_hook "$(cat "$FIX/ups-real.json")")
+    assert_true "T-19: real UPS payload -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
+  else
+    assert_true "T-19: real UPS payload sid regex-valid" 'false'
+  fi
 else
   printf 'FAIL: ups-real.json missing (T-19 cannot run)\n' >&2
   FAIL=$((FAIL+1))
 fi
 
-# --- T-20: end-to-end warn -> /compact (context drops) -> re-arm cycle
-# Codex diff-review flagged that v2.0.0 removes PostCompact and claims the
-# natural below-threshold branch handles re-arm, but the harness only tested
-# threshold-change stale-flag cleanup (T-16), never the real post-compact
-# flow: transcript shrinks because /compact rewrites it, usage drops, flag
-# clears, then transcript grows again and we re-warn cleanly.
+# --- T-20: end-to-end re-arm cycle (flag present -> gone -> present again)
 cleanup
-# Step 1: big transcript -> reminder fires, flag set
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s20","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
-assert_true "T-20: step 1 big transcript -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
-assert_true "T-20: step 1 flag set" '[[ -e "$CACHE/compact-warned-s20" ]]'
-
-# Step 2: /compact simulation — transcript rewritten to a smaller one
-# whose newest main-chain usage is below threshold.
-POSTCOMPACT='{"message":{"role":"assistant","usage":{"input_tokens":5,"cache_creation_input_tokens":50000,"cache_read_input_tokens":0}}}'
-make_transcript "$FIX/t20-post-compact.jsonl" "$POSTCOMPACT"
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s20","transcript_path":"'"$FIX/t20-post-compact.jsonl"'"}')
-assert_eq "T-20: step 2 post-compact small transcript -> silent" "" "$OUT"
-assert_true "T-20: step 2 flag cleared by below-threshold branch" '[[ ! -e "$CACHE/compact-warned-s20" ]]'
-
-# Step 3: transcript grows again -> re-arm fires a fresh reminder
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=200000 run_hook '{"session_id":"s20","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
+write_warn s20 250000 200000
+OUT=$(run_hook '{"session_id":"s20"}')
+assert_true "T-20: step 1 flag present -> reminder fires" '[[ "$OUT" == *"prep-compact"* ]]'
+assert_true "T-20: step 1 compact-warned set" '[[ -e "$CACHE/compact-warned-s20" ]]'
+rm -f "$CACHE/context-warn-s20"
+OUT=$(run_hook '{"session_id":"s20"}')
+assert_eq "T-20: step 2 flag gone -> silent" "" "$OUT"
+assert_true "T-20: step 2 compact-warned cleared" '[[ ! -e "$CACHE/compact-warned-s20" ]]'
+write_warn s20 260000 200000
+OUT=$(run_hook '{"session_id":"s20"}')
 assert_true "T-20: step 3 re-arm fires reminder" '[[ "$OUT" == *"prep-compact"* ]]'
-assert_true "T-20: step 3 flag re-set" '[[ -e "$CACHE/compact-warned-s20" ]]'
+assert_true "T-20: step 3 compact-warned re-set" '[[ -e "$CACHE/compact-warned-s20" ]]'
+
+# --- T-84: safe_sid env-first (env set -> used even when stdin differs)
+cleanup
+write_warn envU1 300000 1
+printf '%s' '{"session_id":"stdinU1"}' | CLAUDE_CODE_SESSION_ID="envU1" HOME="$SANDBOX_HOME" bash "$HOOK" >/dev/null 2>&1
+assert_true "T-84: env sid used -> compact-warned-envU1 set" '[[ -e "$CACHE/compact-warned-envU1" ]]'
+assert_true "T-84: stdin sid NOT used" '[[ ! -e "$CACHE/compact-warned-stdinU1" ]]'
+
+# --- T-85: env-invalid -> stdin sid used
+cleanup
+write_warn stdinU2 300000 1
+printf '%s' '{"session_id":"stdinU2"}' | CLAUDE_CODE_SESSION_ID="bad/env" HOME="$SANDBOX_HOME" bash "$HOOK" >/dev/null 2>&1
+assert_true "T-85: env invalid -> stdin sid used" '[[ -e "$CACHE/compact-warned-stdinU2" ]]'
 
 # --- T-39: reminder when handoff exists -> verbatim full string equality
 cleanup
+write_warn s39 250000 1
 HANDOFF_PATH_T39="$CACHE/handoff-s39.json"
 echo '{"version":"3.0"}' > "$HANDOFF_PATH_T39"
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"s39","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
+OUT=$(run_hook '{"session_id":"s39"}')
 EXPECTED_T39="Session context is approximately 250000 tokens (above configured threshold of 1 tokens). The on-disk handoff at $HANDOFF_PATH_T39 is current. When the user is ready to compact, run /prep-compact:prep-compact to add the analytical layer (decisions, constraints, blockers, verb-anchored next-step) and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first."
 assert_eq "T-39: handoff-present reminder verbatim" "$EXPECTED_T39" "$OUT"
 
 # --- T-40: reminder when handoff missing -> verbatim no-handoff variant
 cleanup
-OUT=$(CLAUDE_CONTEXT_WARN_TOKENS=1 run_hook '{"session_id":"s40","transcript_path":"'"$FIX/transcript-usage.jsonl"'"}')
+write_warn s40 250000 1
+OUT=$(run_hook '{"session_id":"s40"}')
 EXPECTED_T40="Session context is approximately 250000 tokens (above configured threshold of 1 tokens). Run /prep-compact:prep-compact to survey current state and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first."
 assert_eq "T-40: handoff-missing reminder verbatim" "$EXPECTED_T40" "$OUT"
+
+# --- T-NP: UPS hook has no interpreter spawn and never reads the transcript
+assert_true "T-NP: no python invocation in UPS hook" '! grep -qE "\bpython3?\b" "$HOOK"'
+assert_true "T-NP: no transcript_path read in UPS hook" '! grep -q "transcript_path" "$HOOK"'
 
 # --- T-41: SKILL.md documents session-id binding via the helper (not mtime)
 SKILL="$SCRIPT_DIR/../skills/prep-compact/SKILL.md"
@@ -855,8 +835,45 @@ printf '%s' '{"session_id":"../evil","transcript_path":"'"$FIX/t69.jsonl"'","cwd
 ANY69=$(find "$CACHE" -type f \( -name 'context-warn-*' -o -name 'handoff-*' \) 2>/dev/null | head -1)
 assert_eq "T-69: both invalid sid -> nothing written" "" "$ANY69"
 
+# --- Token-detection edge cases (moved from the UPS hook; the scan now lives in Stop) ---
+
+# --- T-70: api-error line skipped -> flag uses earlier main-chain usage
+cleanup
+APIERR_HUGE='{"isApiErrorMessage":true,"message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":999999,"cache_read_input_tokens":0}}}'
+make_transcript "$FIX/t70.jsonl" "$TOK_300K" "$APIERR_HUGE"
+CLAUDE_CONTEXT_WARN_TOKENS=250000 run_stop_hook '{"session_id":"s70","transcript_path":"'"$FIX/t70.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_eq "T-70: api-error skipped -> flag uses main-chain 300000" "300000 250000" "$(cat "$CACHE/context-warn-s70" 2>/dev/null)"
+
+# --- T-71: pre-first-turn (no usable usage) -> no flag written
+cleanup
+USERMSG='{"message":{"role":"user","content":"hello"}}'
+make_transcript "$FIX/t71.jsonl" "$USERMSG"
+CLAUDE_CONTEXT_WARN_TOKENS=1 run_stop_hook '{"session_id":"s71","transcript_path":"'"$FIX/t71.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_true "T-71: no usable usage -> no context-warn flag" '[[ ! -e "$CACHE/context-warn-s71" ]]'
+
+# --- T-72: malformed last usage line skipped -> flag uses earlier valid line (250010)
+cleanup
+CLAUDE_CONTEXT_WARN_TOKENS=1 run_stop_hook '{"session_id":"s72","transcript_path":"'"$FIX/transcript-malformed-tail.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_eq "T-72: malformed tail skipped -> flag uses earlier valid 250010" "250010 1" "$(cat "$CACHE/context-warn-s72" 2>/dev/null)"
+
+# --- T-73: non-assistant usage skipped -> flag uses earlier assistant line
+cleanup
+USERUSAGE='{"message":{"role":"user","usage":{"input_tokens":10,"cache_creation_input_tokens":888888,"cache_read_input_tokens":0}}}'
+make_transcript "$FIX/t73.jsonl" "$TOK_300K" "$USERUSAGE"
+CLAUDE_CONTEXT_WARN_TOKENS=250000 run_stop_hook '{"session_id":"s73","transcript_path":"'"$FIX/t73.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_eq "T-73: non-assistant usage skipped -> flag uses main-chain 300000" "300000 250000" "$(cat "$CACHE/context-warn-s73" 2>/dev/null)"
+
+# --- T-74: oversized last record beyond the 1 MB tail -> no usable usage -> no flag
+cleanup
+EARLIER_VALID='{"message":{"role":"assistant","usage":{"input_tokens":10,"cache_creation_input_tokens":123446,"cache_read_input_tokens":0}}}'
+PAD=$("$PY" -c "print('A' * 1300000)")  # 1.3 MB pushes the earlier valid line past the 1 MB tail
+OVERSIZED="{\"message\":{\"role\":\"assistant\",\"content\":\"$PAD\",\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":50000,\"cache_read_input_tokens\":0}}}"
+make_transcript "$FIX/t74.jsonl" "$EARLIER_VALID" "$OVERSIZED"
+CLAUDE_CONTEXT_WARN_TOKENS=1 run_stop_hook '{"session_id":"s74","transcript_path":"'"$FIX/t74.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_true "T-74: oversized straddling last record -> no context-warn flag" '[[ ! -e "$CACHE/context-warn-s74" ]]'
+
 else
-  SKIPPED=74
+  SKIPPED=79
 fi  # STOP_FIXTURE_OK
 
 # ===================================================================
