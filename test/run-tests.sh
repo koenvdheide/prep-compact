@@ -96,7 +96,8 @@ fi
 #   v3.1 Task 3: +2 non-Stop (T-86), +6 Stop-dep (T-87 x4, T-88 x2)
 #   v3.1 gate fix: +2 Stop-dep (T-75: no-usage must not clear an existing flag)
 #   v3.1 gate fix: +2 non-Stop (T-89: trailing-junk flag -> malformed/re-arm)
-#   -> EXPECTED_PASS 152; SKIPPED 87 when stop-real.json fixture missing
+#   -> EXPECTED_PASS 152 total; 64 non-Stop + 88 Stop-dep (verified by a
+#      fixture-missing run: PASS=64 + SKIPPED=88 == 152).
 EXPECTED_PASS=152
 SKIPPED=0
 
@@ -934,7 +935,7 @@ assert_true "T-88: stale Stop does not clear a newer flag" '[[ -e "$CACHE/contex
 assert_eq "T-88: newer flag content intact" "300000 200000" "$(cat "$CACHE/context-warn-s88" 2>/dev/null)"
 
 else
-  SKIPPED=87
+  SKIPPED=88
 fi  # STOP_FIXTURE_OK
 
 # ===================================================================
