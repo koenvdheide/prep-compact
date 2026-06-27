@@ -844,7 +844,11 @@ assert_true "T-46: valid lower-root candidate chosen" '[[ "$RPATH" == *"zzz-inli
 # T-46b semantic-malformed (cwd is a list, not a string) is skipped, not fatal
 reset_pdata
 mkdir -p "$PDATA/aaa-inline"
-"$PY" -c "import json;json.dump({'cwd':['oops']},open(r'$PDATA/aaa-inline/handoff-sidA.json','w'))"
+# to_native: the path is interpolated INTO the python -c code, so MSYS does not
+# translate it (unlike an argv path); without this, Windows python resolves the
+# /tmp/... MSYS path to a non-existent C:\tmp\... and the malformed fixture is
+# never written, making this test pass for the wrong reason.
+"$PY" -c "import json;json.dump({'cwd':['oops']},open(r'$(to_native "$PDATA/aaa-inline/handoff-sidA.json")','w'))"
 write_handoff "zzz-inline" "sidA" "C:/proj/one"
 run_resolve_f "sidA" "C:/proj/one"
 assert_eq   "T-46b: non-string cwd skipped, scan continues -> HIT" "HIT" "$RSTATUS"
