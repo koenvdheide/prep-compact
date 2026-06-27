@@ -14,7 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 
 - The UserPromptSubmit hook converts the transcript path with `cygpath` first on Git Bash, matching the pre-merge behaviour. A direct existence check could otherwise resolve a POSIX path such as `/tmp/x` to a drive-relative `C:\tmp\x` and scan the wrong file.
-- With the Stop hook now asynchronous, it compares the on-disk handoff's `transcript_mtime_at_write` before replacing the handoff and skips the write when the existing file is newer, so a slow run cannot overwrite a fresher handoff from a later turn.
+- With the Stop hook now asynchronous, it compares the on-disk handoff's `transcript_mtime_at_write` before replacing the handoff and skips the write when the existing file is newer, reducing the chance that a slow run overwrites a fresher handoff from a later turn. A narrow residual race remains (the check and the replace are not atomic, so a concurrent newer run can still interleave between them; closing it fully would need a per-session lock), but it is rare and self-corrects on the next successful Stop.
 
 ## [3.0.2] - 2026-06-05
 
