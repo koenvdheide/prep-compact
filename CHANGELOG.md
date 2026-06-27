@@ -17,7 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- The Stop hook re-checks the on-disk handoff's `transcript_mtime_at_write` immediately before touching the flag, so a stale async run does not write a stale flag over a fresher one. A residual race remains (closing it fully would need a per-session lock) and is documented in the hook.
+- The Stop hook re-checks the on-disk handoff's `transcript_mtime_at_write` immediately before touching the flag, reducing the chance that a stale async run writes a stale flag over a fresher one. A residual race remains (closing it fully would need a per-session lock) and is documented in the hook.
 - The flag is written with a trailing LF (a Windows CRLF would leave a stray carriage return that breaks the bash reader's integer parse); the reader also tolerates CRLF defensively.
 
 ### Notes

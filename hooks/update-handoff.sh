@@ -40,11 +40,13 @@ try:
 except Exception:
     sid_stdin = ''; tp = ''; cwd = ''
 
-# Shared SAFE_SID derivation (must match check-context-size.sh exactly):
-# \$CLAUDE_CODE_SESSION_ID first, then stdin session_id, both via the same
-# regex. SHA-1 fallback dropped in v3.1 -> invalid id skips (no handoff, no
+# Shared SAFE_SID derivation (matches check-context-size.sh for well-formed
+# hook JSON): \$CLAUDE_CODE_SESSION_ID first, then stdin session_id, both via the
+# same regex. SHA-1 fallback dropped in v3.1 -> invalid id skips (no handoff, no
 # flag). Real session ids are UUIDs, always regex-valid; parity matters because
-# Stop writes context-warn-<safe> / handoff-<safe>.json and UPS reads them.
+# Stop writes context-warn-<safe> / handoff-<safe>.json and UPS reads them. The
+# UPS reader uses a textual grep/sed fallback, so the two can differ only on
+# malformed stdin with the env var absent, which Claude Code never emits.
 sid_env = os.environ.get('CLAUDE_CODE_SESSION_ID', '') or ''
 def _valid(s):
     return bool(s) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', s) is not None
@@ -549,7 +551,14 @@ try:
 except Exception:
     pass
 
-if _tokens is not None and _tokens >= _threshold:
+if _tokens is None:
+    # Could not determine the token count (no usable usage in the 1 MB tail,
+    # e.g. an oversized final turn pushed it out). Absence of evidence is not
+    # "below threshold": leave any existing flag untouched rather than clearing a
+    # legitimate above-threshold flag and suppressing the warning indefinitely.
+    # Matches the old UPS no-op-on-no-usage behaviour.
+    pass
+elif _tokens >= _threshold:
     # Atomic flag write (tempfile + os.replace, trailing newline) so a crash
     # never leaves a partial flag the UPS reader would misparse.
     try:
@@ -568,7 +577,7 @@ if _tokens is not None and _tokens >= _threshold:
     except OSError:
         pass
 else:
-    # Below threshold (or no usable usage) -> clear the flag (re-arm after /compact).
+    # Below threshold -> clear the flag (re-arm after /compact).
     try:
         os.unlink(_flag_path)
     except OSError:
