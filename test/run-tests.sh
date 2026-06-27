@@ -770,7 +770,7 @@ assert_eq "T-56: legit =-char path kept"   "yes" "$("$PY" -c "import json;d=json
 assert_eq "T-56: shell-junk line rejected" "no"  "$("$PY" -c "import json;d=json.load(open('$HANDOFF'));print('yes' if any(('SCRIPT_DIR' in p) or ('SKILL=' in p) or ('prep-compact/SKILL.md' in p) for p in d['recent_files']) else 'no')")"
 
 else
-  SKIPPED=59
+  SKIPPED=60
 fi  # STOP_FIXTURE_OK
 
 # ===================================================================
