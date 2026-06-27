@@ -94,8 +94,10 @@ fi
 #   v3.1 Task 1: +15 Stop-dep (T-24 +1, T-60..T-69 +14)
 #   v3.1 Task 2: UPS tests flag-driven (-48 old +37 new, non-Stop); +5 Stop-dep (T-70..T-74)
 #   v3.1 Task 3: +2 non-Stop (T-86), +6 Stop-dep (T-87 x4, T-88 x2)
-#   -> EXPECTED_PASS 148; SKIPPED 85 when stop-real.json fixture missing
-EXPECTED_PASS=148
+#   v3.1 gate fix: +2 Stop-dep (T-75: no-usage must not clear an existing flag)
+#   v3.1 gate fix: +2 non-Stop (T-89: trailing-junk flag -> malformed/re-arm)
+#   -> EXPECTED_PASS 152; SKIPPED 87 when stop-real.json fixture missing
+EXPECTED_PASS=152
 SKIPPED=0
 
 # CLAUDE_CODE_SESSION_ID is cleared so the UPS hook's env-first safe_sid
@@ -222,6 +224,14 @@ cleanup
 printf '300000\n' > "$CACHE/context-warn-s83"
 OUT=$(run_hook '{"session_id":"s83"}')
 assert_eq "T-83: partial flag -> silent" "" "$OUT"
+
+# --- T-89: flag with trailing junk (not exactly two ints) -> malformed, re-arm
+cleanup
+printf '300000 200000 junk\n' > "$CACHE/context-warn-s89"
+: >"$CACHE/compact-warned-s89"
+OUT=$(run_hook '{"session_id":"s89"}')
+assert_eq "T-89: three-field flag -> silent (malformed)" "" "$OUT"
+assert_true "T-89: three-field flag -> compact-warned cleared (re-arm)" '[[ ! -e "$CACHE/compact-warned-s89" ]]'
 
 # --- T-8: empty stdin + no env sid -> silent (fail-open)
 cleanup
@@ -881,6 +891,15 @@ make_transcript "$FIX/t74.jsonl" "$EARLIER_VALID" "$OVERSIZED"
 CLAUDE_CONTEXT_WARN_TOKENS=1 run_stop_hook '{"session_id":"s74","transcript_path":"'"$FIX/t74.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
 assert_true "T-74: oversized straddling last record -> no context-warn flag" '[[ ! -e "$CACHE/context-warn-s74" ]]'
 
+# --- T-75: no usable usage must NOT clear an existing flag (absence != below-threshold)
+cleanup
+USERONLY='{"message":{"role":"user","content":"hello"}}'
+make_transcript "$FIX/t75.jsonl" "$USERONLY"
+printf '300000 200000\n' > "$CACHE/context-warn-s75"
+CLAUDE_CONTEXT_WARN_TOKENS=200000 run_stop_hook '{"session_id":"s75","transcript_path":"'"$FIX/t75.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+assert_true "T-75: no-usage Stop preserves an existing flag" '[[ -e "$CACHE/context-warn-s75" ]]'
+assert_eq "T-75: preserved flag content intact" "300000 200000" "$(cat "$CACHE/context-warn-s75" 2>/dev/null)"
+
 # --- Stop+UPS integration: re-arm and stale-Stop race (red-team edge cases) ---
 
 # --- T-87: delayed clear after /compact -> Stop clears flag -> UPS re-arms
@@ -915,7 +934,7 @@ assert_true "T-88: stale Stop does not clear a newer flag" '[[ -e "$CACHE/contex
 assert_eq "T-88: newer flag content intact" "300000 200000" "$(cat "$CACHE/context-warn-s88" 2>/dev/null)"
 
 else
-  SKIPPED=85
+  SKIPPED=87
 fi  # STOP_FIXTURE_OK
 
 # ===================================================================

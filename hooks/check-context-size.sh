@@ -9,10 +9,13 @@
 # a suppression flag so it warns once per crossing. No interpreter process, no
 # transcript scan on the per-message path. Always exits 0 (fail-open).
 #
-# safe_sid (must match update-handoff.sh exactly): $CLAUDE_CODE_SESSION_ID first
-# (verified present in the hook env, though undocumented), else session_id read
-# from stdin JSON, both via the same regex. Invalid/absent -> silent exit 0. No
-# SHA-1 fallback: real session ids are UUIDs, always regex-valid.
+# safe_sid (matches update-handoff.sh for well-formed hook JSON):
+# $CLAUDE_CODE_SESSION_ID first (verified present in the hook env, though
+# undocumented), else session_id read from stdin JSON, both via the same regex.
+# Invalid/absent -> silent exit 0. No SHA-1 fallback: real session ids are
+# UUIDs, always regex-valid. The stdin fallback here is textual (grep/sed), so on
+# malformed stdin with no env var it can differ from Stop's json.load parse;
+# Claude Code emits well-formed JSON with the env var set, so in practice they agree.
 #
 # Accepted tradeoff (v3.1): the warning now depends on the Stop hook having
 # written the flag. If Stop is killed/disabled/errored, an above-threshold
@@ -51,7 +54,7 @@ FLAG="$CACHE_DIR/compact-warned-$SID"
 # IFS includes \r so a CRLF-terminated flag still parses (defensive: the writer
 # emits LF, but a text-mode write elsewhere must not silently break the parse).
 if [[ -e "$WARN" ]] && IFS=$' \t\r' read -r TOKENS THRESHOLD _REST < "$WARN" 2>/dev/null \
-     && [[ "$TOKENS" =~ ^[0-9]+$ && "$THRESHOLD" =~ ^[0-9]+$ ]]; then
+     && [[ "$TOKENS" =~ ^[0-9]+$ && "$THRESHOLD" =~ ^[0-9]+$ && -z "${_REST:-}" ]]; then
   # Already warned this crossing -> suppress.
   [[ -e "$FLAG" ]] && exit 0
   : >"$FLAG"
