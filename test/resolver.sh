@@ -1,6 +1,8 @@
-# Session-binding helper suite (skills/prep-compact/resolve-handoff.sh).
+# Skill suite: the session-binding helper (resolve-handoff.sh) and the
+# SKILL.md contract assertions.
 # Sourced by run-tests.sh after common.sh.
 
+[[ -n "${TEST_DIR:-}" ]] || { printf '%s: source this from run-tests.sh, do not run it directly\n' "${BASH_SOURCE[0]}" >&2; exit 1; }
 # ===================================================================
 # resolve-handoff.sh — session-binding helper (T-42..T-50)
 # ===================================================================
@@ -120,3 +122,13 @@ case "$(uname -s)" in
     run_resolve_f "sidA" "/proj/one" ;;
 esac
 assert_eq "T-50: cwd canonicalize-equal -> HIT" "HIT" "$RSTATUS"
+
+# --- T-41: SKILL.md documents session-id binding via the helper (not mtime)
+SKILL="$SCRIPT_DIR/../skills/prep-compact/SKILL.md"
+assert_true "T-41: SKILL.md documents resolve-handoff.sh binding" '[[ "$(cat "$SKILL")" == *"resolve-handoff.sh"* ]]'
+assert_true "T-41: SKILL.md no longer documents mtime discovery"  '[[ "$(cat "$SKILL")" != *"mtime"* ]]'
+
+# --- T-51: single-line /compact enforcement
+assert_true "T-51: multi-line escape hatch removed"   '[[ "$(cat "$SKILL")" != *"Multi-line form is permitted"* ]]'
+assert_true "T-51: verify gate present (single line)" '[[ "$(cat "$SKILL")" == *"single physical line"* ]]'
+assert_true "T-51: verify gate present (goal literal)" '[[ "$(cat "$SKILL")" == *"begins with the literal characters"* ]]'

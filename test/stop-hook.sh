@@ -1,9 +1,7 @@
 # Stop hook suite (update-handoff.sh): handoff writing, the context-warn flag,
 # and the Stop+UPS integration cases. Sourced by run-tests.sh after common.sh.
 
-# Stop-hook tests below depend on the Task-1 T-0 gate. Skip if gate failed.
-if (( STOP_FIXTURE_OK == 1 )); then
-
+[[ -n "${TEST_DIR:-}" ]] || { printf '%s: source this from run-tests.sh, do not run it directly\n' "${BASH_SOURCE[0]}" >&2; exit 1; }
 STOP_HOOK="$SCRIPT_DIR/../hooks/update-handoff.sh"
 
 # CLAUDE_CODE_SESSION_ID is cleared so the hook's env-first safe_sid derivation
@@ -570,7 +568,3 @@ printf '300000 200000\n' > "$CACHE/context-warn-s88"
 CLAUDE_CONTEXT_WARN_TOKENS=200000 run_stop_hook '{"session_id":"s88","transcript_path":"'"$FIX/t88.jsonl"'","cwd":"/x","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
 assert_true "T-88: stale Stop does not clear a newer flag" '[[ -e "$CACHE/context-warn-s88" ]]'
 assert_eq "T-88: newer flag content intact" "300000 200000" "$(cat "$CACHE/context-warn-s88" 2>/dev/null)"
-
-else
-  SKIPPED=88
-fi  # STOP_FIXTURE_OK

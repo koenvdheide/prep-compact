@@ -1,6 +1,7 @@
 # UserPromptSubmit hook suite (check-context-size.sh).
 # Sourced by run-tests.sh after common.sh.
 
+[[ -n "${TEST_DIR:-}" ]] || { printf '%s: source this from run-tests.sh, do not run it directly\n' "${BASH_SOURCE[0]}" >&2; exit 1; }
 # ============================================================
 # v3.1: UserPromptSubmit hook is a pure-bash context-warn reader.
 # Token detection now lives in the Stop hook (T-60.., T-70..); these tests
@@ -189,13 +190,3 @@ assert_eq "T-40: handoff-missing reminder verbatim" "$EXPECTED_T40" "$OUT"
 # --- T-NP: UPS hook has no interpreter spawn and never reads the transcript
 assert_true "T-NP: no python invocation in UPS hook" '! grep -qE "\bpython3?\b" "$HOOK"'
 assert_true "T-NP: no transcript_path read in UPS hook" '! grep -q "transcript_path" "$HOOK"'
-
-# --- T-41: SKILL.md documents session-id binding via the helper (not mtime)
-SKILL="$SCRIPT_DIR/../skills/prep-compact/SKILL.md"
-assert_true "T-41: SKILL.md documents resolve-handoff.sh binding" '[[ "$(cat "$SKILL")" == *"resolve-handoff.sh"* ]]'
-assert_true "T-41: SKILL.md no longer documents mtime discovery"  '[[ "$(cat "$SKILL")" != *"mtime"* ]]'
-
-# --- T-51: single-line /compact enforcement
-assert_true "T-51: multi-line escape hatch removed"   '[[ "$(cat "$SKILL")" != *"Multi-line form is permitted"* ]]'
-assert_true "T-51: verify gate present (single line)" '[[ "$(cat "$SKILL")" == *"single physical line"* ]]'
-assert_true "T-51: verify gate present (goal literal)" '[[ "$(cat "$SKILL")" == *"begins with the literal characters"* ]]'
