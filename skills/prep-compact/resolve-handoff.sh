@@ -94,7 +94,7 @@ def _to_win(path):
         except Exception:
             pass
     m = re.match(r'^/(?:cygdrive/)?([A-Za-z])/(.*)$', path)
-    if m:
+    if m and os.name == 'nt':
         return m.group(1).upper() + ":\\" + m.group(2).replace('/', '\\')
     return path
 
@@ -103,7 +103,7 @@ def canon(path):
     p = _to_win(path)
     if re.match(r'^[A-Za-z]:', p):                 # Windows drive path
         return p.replace('/', '\\').rstrip('\\').lower()
-    return p.rstrip('/')                           # POSIX path, case-sensitive
+    return p.rstrip('/') or '/'                           # POSIX path, case-sensitive
 
 target = canon(cur_cwd)
 
@@ -127,7 +127,7 @@ if not kept:
 kept.sort(key=lambda t: (t[0], t[1]))              # priority, then lexical
 chosen = kept[0][1]
 print("HIT")
-print(_to_win(chosen))
+print(chosen)
 sys.exit(0)
 PYEOF
 exit 0
