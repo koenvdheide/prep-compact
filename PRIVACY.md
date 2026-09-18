@@ -4,9 +4,10 @@ prep-compact runs entirely on your machine. The plugin makes no network calls of
 
 ## Local persistence
 
-The plugin writes two kinds of files under `${CLAUDE_PLUGIN_DATA}` (default `~/.claude/cache/` if unset):
+The plugin writes three kinds of files under `${CLAUDE_PLUGIN_DATA}` (default `~/.claude/cache/` if unset):
 
-- **`compact-warned-<safe_sid>`** — empty presence marker for the threshold reminder (one per session). No content recorded.
+- **`compact-warned-<safe_sid>`** — empty presence marker that suppresses repeat reminders for one threshold crossing, removed again once context drops back below the threshold. No content recorded.
+- **`context-warn-<safe_sid>`** (new in v3.1) — written by the Stop hook when the newest main-chain assistant usage is at or above the threshold, and removed once it drops below. Holds two integers, the token count and the configured threshold, and nothing else.
 - **`handoff-<safe_sid>.json`** (new in v3.0) — the warm handoff. Contents:
   - `cumulative_files`, `recent_files` — file paths the session has touched (extracted from `Read`/`Edit`/`Write`/`NotebookEdit`/`Glob`/`Grep` tool calls). No file CONTENT, only paths.
   - `in_progress`, `recent_task_launches` — your todo state and subagent launches, extracted from `TodoWrite`/`Task` tool calls.
@@ -40,7 +41,7 @@ When set:
 
 ## Session ID safety
 
-`session_id` is validated with regex `^[A-Za-z0-9_-]{1,64}$` before use as a filename component. Exotic values are SHA-1-hashed to prevent path-escape via `../` or absolute paths.
+`session_id` is validated with regex `^[A-Za-z0-9_-]{1,64}$` before use as a filename component. As of v3.1 a value that fails the check never becomes a filename anywhere: both hooks skip it, writing no flag and no handoff, and the skill's resolver reports `NOSID` and surveys the live conversation instead. Path-escape via `../` or an absolute path is blocked by construction.
 
 ## Uninstall
 
