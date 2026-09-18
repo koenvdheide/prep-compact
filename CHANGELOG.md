@@ -4,12 +4,13 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.1.0] - 2026-06-27
+## [3.1.0] - 2026-09-18
 
 ### Changed
 
 - The UserPromptSubmit hook is now pure bash: it reads a small per-session flag file the Stop hook writes, instead of spawning Python to tail-scan the transcript on every message. Token detection moved into the (already async) Stop hook, so the per-message path no longer pays an interpreter cold-start or a 256 KB scan.
 - Both hooks resolve the session id from `$CLAUDE_CODE_SESSION_ID` first (present in the hook environment, though undocumented), falling back to the stdin `session_id`. The SHA-1 fallback for non-conforming ids is dropped: an id that fails the `^[A-Za-z0-9_-]{1,64}$` check is skipped (no flag, no handoff). Real session ids are UUIDs, always regex-valid.
+- The skill's handoff resolver now applies that same rule. A session id failing the regex reports `NOSID` and the skill surveys the live conversation, where it previously hashed the id to SHA-1 hex and looked for a handoff under that name. No v3.1 hook writes such a file, so that lookup could only match a handoff left behind by v3.0.x.
 
 ### Added
 
