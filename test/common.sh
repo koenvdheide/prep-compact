@@ -2,6 +2,8 @@
 # PASS/FAIL counters, assertions, and the hook runners. Sourced by run-tests.sh,
 # which owns SCRIPT_DIR, shell options and the final guards.
 
+[[ -n "${SCRIPT_DIR:-}" ]] || { printf 'test/common.sh: source this from run-tests.sh, do not run it directly\n' >&2; exit 1; }
+
 HOOK="$SCRIPT_DIR/../hooks/check-context-size.sh"
 TEST_DIR="$(mktemp -d 2>/dev/null || printf '/tmp/prep-compact-test-%s' "$$")"
 mkdir -p "$TEST_DIR/fixtures"
