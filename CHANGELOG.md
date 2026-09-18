@@ -20,6 +20,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - The Stop hook re-checks the on-disk handoff's `transcript_mtime_at_write` immediately before touching the flag, reducing the chance that a stale async run writes a stale flag over a fresher one. A residual race remains (closing it fully would need a per-session lock) and is documented in the hook.
 - The flag is written with a trailing LF (a Windows CRLF would leave a stray carriage return that breaks the bash reader's integer parse); the reader also tolerates CRLF defensively.
+- Both hooks keep their fail-open contract when `HOME` is unset: `${HOME:-}` in the cache-dir default, where a bare `$HOME` aborted under `set -u`.
+- The skill resolver's MSYS-to-drive-letter path conversion is confined to Windows. Off Windows it rewrote any `/x/...` path into `X:\...`, so a resolved handoff under a single-letter root such as `/w/workspace` was reported at a path that does not exist.
+- A session running in the POSIX root directory no longer canonicalises its cwd to the empty string, which matched any handoff whose stored `cwd` was empty.
+- The UserPromptSubmit hook tests for the flag before removing it, so the common below-threshold turn no longer spawns `rm`.
 
 ### Notes
 
