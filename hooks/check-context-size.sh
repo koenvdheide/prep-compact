@@ -65,7 +65,9 @@ if [[ -e "$WARN" ]] && IFS=$' \t\r' read -r TOKENS THRESHOLD _REST < "$WARN" 2>/
     printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). Run /prep-compact:prep-compact to survey current state and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first.\n' "$TOKENS" "$THRESHOLD"
   fi
 else
-  rm -f "$FLAG" 2>/dev/null || true
+  # The -e test keeps the common below-threshold path free of an rm process
+  # spawn, which is the per-message cost v3.1 exists to cut.
+  [[ -e "$FLAG" ]] && rm -f "$FLAG" 2>/dev/null || true
 fi
 
 exit 0
