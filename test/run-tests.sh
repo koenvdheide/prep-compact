@@ -32,7 +32,7 @@ FAIL=0
 PASS=0
 
 # Python resolution: mirror the hook. Tests invoke python for fixture
-# generation and SHA-1 hashing.
+# generation.
 if command -v python3 >/dev/null 2>&1; then
   PY=python3
 elif command -v python >/dev/null 2>&1 && python -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' 2>/dev/null; then
@@ -1033,20 +1033,16 @@ assert_eq   "T-47: collision -> HIT"                 "HIT" "$(sed -n 1p "$out")"
 assert_true "T-47: explicit priority-0 root chosen"  '[[ "$(sed -n 2p "$out")" == *"explicit"* ]]'
 assert_true "T-47: sibling glob root NOT chosen"     '[[ "$(sed -n 2p "$out")" != *"zzz-inline"* ]]'
 
-# T-48 oversized sid -> SHA-1 filename resolves
+# T-48 oversized sid is unusable -> NOSID, no filename guessed
 reset_pdata
 LONGSID=$(printf 'a%.0s' {1..200})
-SHA=$("$PY" -c "import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest())" "$LONGSID")
-write_handoff "prep-compact-inline" "$SHA" "C:/proj/one"
 run_resolve_f "$LONGSID" "C:/proj/one"
-assert_eq "T-48: oversized sid -> SHA-1 HIT" "HIT" "$RSTATUS"
+assert_eq "T-48: oversized sid -> NOSID" "NOSID" "$RSTATUS"
 
-# T-49 traversal sid is sanitized to SHA-1 (resolves at the hashed name, no escape)
+# T-49 traversal sid is unusable -> NOSID, no path escape
 reset_pdata
-EVILSHA=$("$PY" -c "import hashlib; print(hashlib.sha1('../../evil'.encode()).hexdigest())")
-write_handoff "prep-compact-inline" "$EVILSHA" "C:/proj/one"
 run_resolve_f "../../evil" "C:/proj/one"
-assert_eq "T-49: traversal sid -> SHA-1 sanitized HIT (no raw-path escape)" "HIT" "$RSTATUS"
+assert_eq "T-49: traversal sid -> NOSID" "NOSID" "$RSTATUS"
 
 # T-50 canonicalization: stored backslash C:\.. vs current MSYS /c/.. -> HIT
 # (cygpath when present; the /c<->C: regex fallback covers cygpath-absent CI.)
