@@ -1044,21 +1044,32 @@ reset_pdata
 run_resolve_f "../../evil" "C:/proj/one"
 assert_eq "T-49: traversal sid -> NOSID" "NOSID" "$RSTATUS"
 
-# T-50 canonicalization: stored backslash C:\.. vs current MSYS /c/.. -> HIT
-# (cygpath when present; the /c<->C: regex fallback covers cygpath-absent CI.)
+# T-50 cwd canonicalization. The drive-letter form only exists on Windows, so
+# assert the equivalence each platform actually has: stored backslash C:\.. vs
+# current MSYS /c/.. there, stored trailing slash vs current bare path on POSIX.
 reset_pdata
-write_handoff "prep-compact-inline" "sidA" 'C:\proj\one'
-run_resolve_f "sidA" "/c/proj/one"
-assert_eq "T-50: C:\\.. vs /c/.. canonicalize-equal -> HIT" "HIT" "$RSTATUS"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    write_handoff "prep-compact-inline" "sidA" 'C:\proj\one'
+    run_resolve_f "sidA" "/c/proj/one" ;;
+  *)
+    write_handoff "prep-compact-inline" "sidA" '/proj/one/'
+    run_resolve_f "sidA" "/proj/one" ;;
+esac
+assert_eq "T-50: cwd canonicalize-equal -> HIT" "HIT" "$RSTATUS"
 
-# --- Final guard: false-green blocker
-if (( PASS + SKIPPED != EXPECTED_PASS )); then
-  printf 'FAIL: expected %d (got PASS=%d + SKIPPED=%d, FAIL=%d)\n' "$EXPECTED_PASS" "$PASS" "$SKIPPED" "$FAIL" >&2
+# Report assertion failures first: they also depress PASS, so the false-green
+# guard below would otherwise fire on every ordinary failure and report a
+# count mismatch instead of the failures themselves.
+if (( FAIL > 0 )); then
+  printf '\nFAILED: %d assertion(s) failed\n' "$FAIL" >&2
   exit 1
 fi
 
-if (( FAIL > 0 )); then
-  printf '\nFAILED: %d assertion(s) failed\n' "$FAIL" >&2
+# --- Final guard: false-green blocker (reached only when nothing failed, so
+# a mismatch here means assertions went missing rather than failing).
+if (( PASS + SKIPPED != EXPECTED_PASS )); then
+  printf 'FAIL: expected %d (got PASS=%d + SKIPPED=%d)\n' "$EXPECTED_PASS" "$PASS" "$SKIPPED" >&2
   exit 1
 fi
 
