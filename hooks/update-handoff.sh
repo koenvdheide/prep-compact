@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Stop hook for prep-compact v3.0.
+# Stop hook for prep-compact v3.1.
 # Tail-reads the session transcript and writes a continuously-fresh handoff
 # JSON at ${CLAUDE_PLUGIN_DATA}/handoff-<safe_sid>.json. Always exits 0
 # (fail-open). Sister to check-context-size.sh.
 #
 # Extracts paths (Tier-A and Tier-B), user requests, in-progress todos, and
 # Task launches per turn. Tier-C (regex over Bash command text) is dropped.
-# Merge of cumulative_files with prior handoff and atomic-write land in Task 4.
+# Merges cumulative_files with the prior handoff and replaces it atomically.
 
 set -uo pipefail
 
