@@ -25,7 +25,7 @@
 
 set -uo pipefail
 
-CACHE_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/cache}"
+CACHE_DIR="${CLAUDE_PLUGIN_DATA:-${HOME:-}/.claude/cache}"
 
 if ! mkdir -p "$CACHE_DIR" 2>/dev/null; then
   printf 'check-context-size: cannot create %s; hook disabled this turn.\n' "$CACHE_DIR" >&2
