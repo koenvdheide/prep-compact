@@ -18,7 +18,7 @@ Resolve THIS session's own handoff via the helper — never by newest-modified f
    - `NOSID` → no session id available. Same in-memory survey as `MISS`. Prefix: "Note: session id unavailable; surveyed from in-memory conversation."
    - any other or empty output → treat as `MISS`.
 
-The helper binds to the invoking session by `$CLAUDE_CODE_SESSION_ID` and validates the handoff's stored `cwd`, so a sibling session's handoff is never selected. If the session id is ever absent the helper returns `NOSID` and the skill degrades to the in-memory survey — safe, never cross-session.
+The helper binds to the invoking session by `$CLAUDE_CODE_SESSION_ID` and validates the handoff's stored `cwd`, so a sibling session's handoff is never selected. If the session id is absent or fails that check the helper returns `NOSID` and the skill degrades to the in-memory survey — safe, never cross-session.
 
 ## 2. Extractive fields — sourced from handoff JSON
 

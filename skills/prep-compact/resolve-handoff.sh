@@ -12,8 +12,9 @@ CUR_CWD="${1:-$PWD}"
 if command -v python3 >/dev/null 2>&1; then PY=python3
 elif command -v python >/dev/null 2>&1 && python -c 'import sys; sys.exit(0 if sys.version_info[0]>=3 else 1)' 2>/dev/null; then PY=python
 else
-  # No Python 3: cannot sanitize sid / parse JSON. Fail open.
-  if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then echo MISS; else echo NOSID; fi
+  # No Python 3: cannot parse the handoff JSON to verify cwd. Fail open, and
+  # apply the same sid rule as the Python path so both report NOSID alike.
+  if [[ "${CLAUDE_CODE_SESSION_ID:-}" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then echo MISS; else echo NOSID; fi
   exit 0
 fi
 
@@ -30,7 +31,7 @@ PLUGIN_DATA="$PLUGIN_DATA_N" \
 PLUGIN_ROOT="$(_nrm "${CLAUDE_CODE_PLUGIN_CACHE_DIR:-${HOME:-}/.claude/plugins}")" \
 CACHE_FALLBACK="$(_nrm "${HOME:-}/.claude/cache")" \
 "$PY" - <<'PYEOF'
-import os, re, sys, glob, hashlib, json, subprocess
+import os, re, sys, glob, json, subprocess
 
 sid            = os.environ.get("SID", "")
 cur_cwd        = os.environ.get("CUR_CWD", "")
@@ -51,15 +52,12 @@ plugin_data    = _fs(plugin_data)
 plugin_root    = _fs(plugin_root)
 cache_fallback = _fs(cache_fallback)
 
-# safe_sid — identical rule to the hooks.
-if sid and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', sid):
-    safe = sid
-elif sid:
-    safe = hashlib.sha1(sid.encode('utf-8')).hexdigest()
-else:
-    safe = ''
-if not safe:
+# safe_sid — same rule as the hooks: a value failing the regex is unusable, so
+# report NOSID and let the skill survey the live conversation instead. Guessing a
+# filename for it would only ever match a handoff left by v3.0.x.
+if not (sid and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', sid)):
     print("NOSID"); sys.exit(0)
+safe = sid
 
 fname = "handoff-%s.json" % safe
 
