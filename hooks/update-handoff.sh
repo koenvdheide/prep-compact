@@ -29,70 +29,21 @@ else
   exit 0
 fi
 
-# Extract session_id (env-first), transcript_path, cwd from stdin JSON.
-EXTRACTED=$(printf '%s' "$STDIN_JSON" | "$PY" -c "
-import sys, json, re, os
-try:
-    d = json.load(sys.stdin)
-    sid_stdin = d.get('session_id', '') or ''
-    tp = d.get('transcript_path', '') or ''
-    cwd = d.get('cwd', '') or ''
-except Exception:
-    sid_stdin = ''; tp = ''; cwd = ''
-
-# Shared SAFE_SID derivation (matches check-context-size.sh for well-formed
-# hook JSON): \$CLAUDE_CODE_SESSION_ID first, then stdin session_id, both via the
-# same regex. SHA-1 fallback dropped in v3.1 -> invalid id skips (no handoff, no
-# flag). Real session ids are UUIDs, always regex-valid; parity matters because
-# Stop writes context-warn-<safe> / handoff-<safe>.json and UPS reads them. The
-# UPS reader uses a textual grep/sed fallback, so the two can differ only on
-# malformed stdin with the env var absent, which Claude Code never emits.
-sid_env = os.environ.get('CLAUDE_CODE_SESSION_ID', '') or ''
-def _valid(s):
-    return bool(s) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', s) is not None
-if _valid(sid_env):
-    safe = sid_env
-elif _valid(sid_stdin):
-    safe = sid_stdin
-else:
-    safe = ''
-print(safe)
-print(tp)
-print(cwd)
-" 2>/dev/null || printf '\n\n\n')
-SAFE_SID=$(printf '%s' "$EXTRACTED" | sed -n '1p')
-TRANSCRIPT_PATH=$(printf '%s' "$EXTRACTED" | sed -n '2p')
-CWD=$(printf '%s' "$EXTRACTED" | sed -n '3p')
-
-if [[ -z "$SAFE_SID" ]]; then
+# session_id, transcript_path and cwd are derived inside the single Python
+# block below. The program text is what bash feeds on stdin, so the payload
+# travels in a file: Linux caps one environment string at 128 KiB, and Stop
+# input carries last_assistant_message, the whole final assistant turn.
+HOOK_JSON_FILE="$CACHE_DIR/.stop-input-$$"
+if ! printf '%s' "$STDIN_JSON" > "$HOOK_JSON_FILE" 2>/dev/null; then
   exit 0
-fi
-
-if [[ -z "$TRANSCRIPT_PATH" || ! -r "$TRANSCRIPT_PATH" ]]; then
-  exit 0
-fi
-
-# cygpath bridge for Git Bash on Windows.
-if command -v cygpath >/dev/null 2>&1; then
-  TRANSCRIPT_NATIVE=$(cygpath -w "$TRANSCRIPT_PATH" 2>/dev/null || printf '%s' "$TRANSCRIPT_PATH")
-else
-  TRANSCRIPT_NATIVE="$TRANSCRIPT_PATH"
-fi
-
-HANDOFF_PATH="$CACHE_DIR/handoff-$SAFE_SID.json"
-
-# Apply same cygpath bridge to handoff path (Python opens it for write).
-if command -v cygpath >/dev/null 2>&1; then
-  HANDOFF_NATIVE=$(cygpath -w "$HANDOFF_PATH" 2>/dev/null || printf '%s' "$HANDOFF_PATH")
-else
-  HANDOFF_NATIVE="$HANDOFF_PATH"
 fi
 
 # Tail-read transcript (bounded), iterate lines (per-line capped), extract
 # handoff fields, and write JSON. Always exits 0; errors logged to stderr.
 # Python stderr is propagated so deliberate diagnostic messages (e.g. atomic-replace failure) reach the test harness; fail-open via || true.
-"$PY" - "$TRANSCRIPT_NATIVE" "$HANDOFF_NATIVE" "$SAFE_SID" "$CWD" "$TRANSCRIPT_PATH" <<'PYEOF' || true
-import sys, os, json, datetime, re
+PREP_COMPACT_HOOK_JSON_FILE="$HOOK_JSON_FILE" PREP_COMPACT_CACHE_DIR="$CACHE_DIR" \
+  "$PY" - <<'PYEOF' || true
+import sys, os, json, datetime, re, subprocess
 
 _NOISE_RE = re.compile(
     r'(?:^|[\\/])\.git[\\/]'                          # .git/ internals
@@ -111,8 +62,56 @@ TOOL_RESULT_TRUNC = 2000
 USER_REQUESTS_MAX_MSGS = 5
 USER_REQUESTS_MAX_CHARS = 20000
 
-transcript_path_native, handoff_path, safe_sid, cwd, transcript_path_logical = (
-    sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+# cygpath bridge for Git Bash: a native Windows Python cannot stat an MSYS
+# /c/... path. cygpath is authoritative here, because a plain existence check
+# resolves a POSIX path such as /tmp/x to a drive-relative C:\tmp\x and would
+# scan the wrong file. Defined first because the payload file needs it too.
+def _native(p):
+    if not p:
+        return p
+    try:
+        # encoding='utf-8', not text=True: cygpath emits UTF-8, while text=True
+        # decodes with the ANSI code page (cp1252 here) and mangles any accented
+        # path into one that does not exist, disabling the hook for the session.
+        out = subprocess.run(['cygpath', '-w', p], capture_output=True,
+                             encoding='utf-8', check=True).stdout.strip()
+        return out or p
+    except Exception:
+        return p
+
+
+try:
+    with open(_native(os.environ.get('PREP_COMPACT_HOOK_JSON_FILE', '')),
+              'r', encoding='utf-8') as _f:
+        _hook = json.loads(_f.read() or '{}')
+    if not isinstance(_hook, dict):
+        _hook = {}
+except Exception:
+    _hook = {}
+sid_stdin = _hook.get('session_id', '') or ''
+transcript_path_logical = _hook.get('transcript_path', '') or ''
+cwd = _hook.get('cwd', '') or ''
+
+# safe_sid: $CLAUDE_CODE_SESSION_ID first, then the stdin session_id, both via
+# the regex check-context-size.sh applies. No SHA-1 fallback since v3.1, so an
+# id failing the check writes nothing at all. Real session ids are UUIDs and
+# always pass; parity matters because Stop writes context-warn-<safe> and
+# handoff-<safe>.json, and the UPS hook reads them back by the same name.
+def _valid(s):
+    return bool(s) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', s) is not None
+
+
+_sid_env = os.environ.get('CLAUDE_CODE_SESSION_ID', '') or ''
+safe_sid = _sid_env if _valid(_sid_env) else (sid_stdin if _valid(sid_stdin) else '')
+if not safe_sid or not transcript_path_logical:
+    sys.exit(0)
+
+transcript_path_native = _native(transcript_path_logical)
+# Built with '/' rather than os.path.join: the cache dir may still be an MSYS
+# path here, and a backslash join would hand cygpath a mixed separator string.
+handoff_path = _native(
+    (os.environ.get('PREP_COMPACT_CACHE_DIR', '') or '.').rstrip('/')
+    + '/handoff-%s.json' % safe_sid
 )
 
 try:
@@ -585,5 +584,7 @@ else:
 
 sys.exit(0)
 PYEOF
+
+rm -f "$HOOK_JSON_FILE" 2>/dev/null || true
 
 exit 0
