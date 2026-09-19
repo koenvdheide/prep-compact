@@ -4,6 +4,15 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2026-09-19
+
+### Fixed
+
+- The skill's `files:` guidance contradicted its own output schema. Section 4 asks for the minimum set needed to execute `next`, while section 2 said the set is whatever `cumulative_files` holds. Since the Stop hook records paths from `Read`/`Edit`/`Write`/`NotebookEdit`/`Glob`/`Grep` and never sees `Bash`, a shell-driven session would have emitted its scratch files and dropped the source files it actually changed. The set is now editorial, seeded from the handoff and augmented from the conversation.
+- A `MISS` from the resolver now reads as "no handoff matched this session in this directory". It previously read as though the session had no handoff at all, when the usual cause is the session changing directories, which the next Stop re-homes on its own.
+- The resolver prints a native path again on a `HIT`. Confining the drive-letter conversion to Windows in 3.1.0 removed the reason to skip it, and skipping it left a mixed-separator path such as `C:/Users/x/.claude/plugins\data\handoff-<sid>.json`.
+- README no longer claims the handoff lists every file the session touched, and Known limits records the `Bash` gap.
+
 ## [3.1.0] - 2026-09-19
 
 ### Changed
