@@ -4,7 +4,7 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.1.0] - 2026-09-18
+## [3.1.0] - 2026-09-19
 
 ### Changed
 
