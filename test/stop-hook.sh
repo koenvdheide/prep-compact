@@ -77,6 +77,16 @@ HANDOFF=$(to_native "$CACHE/handoff-s27.json")
 assert_true "T-27: handoff file written" '[[ -e "$HANDOFF" ]]'
 assert_true "T-27: handoff parses as JSON with required keys" "$PY -c 'import json,sys; d=json.load(open(\"$HANDOFF\")); req={\"version\",\"session_id\",\"cwd\",\"transcript_path\",\"transcript_mtime_at_write\",\"written_at\",\"cumulative_files\",\"recent_files\",\"in_progress_status\",\"in_progress\",\"recent_task_launches\",\"recent_user_requests\"}; missing = req - set(d.keys()); sys.exit(0 if not missing else 1)'"
 
+# --- T-27u: non-ASCII transcript path -> handoff still written. cygpath emits
+# UTF-8; decoding that with the ANSI code page mangles the path into one that
+# does not exist, which silently disables the hook for the whole session.
+cleanup
+mkdir -p "$FIX/ü"
+cp "$FIX/transcript-handoff-multi-turn.jsonl" "$FIX/ü/t27u.jsonl"
+run_stop_hook '{"session_id":"s27u","transcript_path":"'"$FIX/ü/t27u.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null
+HANDOFF_U=$(to_native "$CACHE/handoff-s27u.json")
+assert_true "T-27u: non-ASCII transcript path -> handoff written" '[[ -e "$HANDOFF_U" ]]'
+
 # --- T-28: recent_files contains Tier-A paths from Read/Edit, NOT user-text mentions
 cleanup
 run_stop_hook '{"session_id":"s28","transcript_path":"'"$FIX/transcript-handoff-multi-turn.jsonl"'","cwd":"/sample/cwd","permission_mode":"default","hook_event_name":"Stop"}' >/dev/null

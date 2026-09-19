@@ -11,16 +11,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # EXPECTED_PASS is the count of assertions expected to PASS for the harness as
 # it currently stands. SKIPPED tracks Stop-dep assertions skipped due to missing
 # fixture. False-green guard at end requires PASS + SKIPPED == EXPECTED_PASS.
-#   -> EXPECTED_PASS 152 total; 64 non-Stop + 88 Stop-dep (verified by a
-#      fixture-missing run: PASS=64 + SKIPPED=88 == 152).
-EXPECTED_PASS=152
+#   -> EXPECTED_PASS 153 total; 64 non-Stop + 89 Stop-dep (verified by a
+#      fixture-missing run: PASS=64 + SKIPPED=89 == 153).
+EXPECTED_PASS=153
 SKIPPED=0
 
 . "$SCRIPT_DIR/ups-hook.sh"
 if (( STOP_FIXTURE_OK == 1 )); then
   . "$SCRIPT_DIR/stop-hook.sh"
 else
-  SKIPPED=88
+  SKIPPED=89
 fi
 . "$SCRIPT_DIR/resolver.sh"
 
