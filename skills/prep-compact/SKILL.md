@@ -14,7 +14,7 @@ Resolve THIS session's own handoff via the helper — never by newest-modified f
 1. Run `bash "<skill-base>/resolve-handoff.sh" "$PWD"`, where `<skill-base>` is this skill's base directory (substitute the literal path from the `Base directory for this skill:` line you were given at load — there is no `$SKILL_BASE` variable; a literal `$SKILL_BASE` would resolve to `/resolve-handoff.sh` and break this) and `$PWD` is the current directory.
 2. Read the helper's first stdout line:
    - `HIT` → the second line is the handoff file's absolute path. Read that JSON and use its extractive fields (§2), then run the §3 analytical pass.
-   - `MISS` → no handoff matched this session (not written yet, or you changed directories). Treat all extractive sources as empty (`cumulative_files=[]`, `in_progress=[]` with status `unknown`, `recent_task_launches=[]`, `recent_user_requests=[]`) and run §3 against the live conversation alone. Prefix the output: "Note: no handoff matched this session; surveyed from in-memory conversation."
+   - `MISS` → no handoff matched this session in this directory (none written yet, or the session changed directories since the last Stop; the next Stop re-homes the handoff to the new cwd). Treat all extractive sources as empty (`cumulative_files=[]`, `in_progress=[]` with status `unknown`, `recent_task_launches=[]`, `recent_user_requests=[]`) and run §3 against the live conversation alone. Prefix the output: "Note: no handoff matched this session in this directory; surveyed from in-memory conversation."
    - `NOSID` → no session id available. Same in-memory survey as `MISS`. Prefix: "Note: session id unavailable; surveyed from in-memory conversation."
    - any other or empty output → treat as `MISS`.
 
@@ -24,7 +24,7 @@ The helper binds to the invoking session by `$CLAUDE_CODE_SESSION_ID` and valida
 
 These come directly from the warm handoff, no re-survey needed:
 
-- `files:` ← handoff `cumulative_files`. You MAY reorder for relevance to the inferred next-step (spec/plan first, then code in relevance order). The set is what the handoff says; the order is editorial.
+- `files:` ← the minimum set needed to execute `next`, spec/plan first then code in relevance order. Seed it from handoff `cumulative_files`, then add files the conversation shows were edited or inspected, and drop scratch and throwaway files. Both the set and the order are editorial: the hook records paths from `Read`/`Edit`/`Write`/`NotebookEdit`/`Glob`/`Grep` only, so anything done through `Bash` never reaches `cumulative_files` and a shell-driven session leaves it thin or empty.
 - `state.in_progress` ← handoff `in_progress` if `in_progress_status == "known"`. If `unknown`, attempt to resolve from the in-memory conversation; default to `unknown` if nothing in window.
 - `state.agents` ← handoff `recent_task_launches`, filtered/annotated by your judgment from the conversation: mark each as `wait`, `ignore`, or `close` (`agent <id>: wait` / etc.). The hook never claims to know status — you do.
 - `recent_user_requests` from the handoff is your source of user intent for the analytical synthesis below. Quote verbatim where it preserves user intent.
