@@ -428,7 +428,7 @@ out = {
     'cwd': cwd,
     'transcript_path': transcript_path_logical,
     'transcript_mtime_at_write': transcript_mtime,
-    'written_at': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+    'written_at': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     'cumulative_files': cumulative_files,
     'recent_files': recent_files,
     'in_progress_status': in_progress_status,
