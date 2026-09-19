@@ -127,7 +127,7 @@ if not kept:
 kept.sort(key=lambda t: (t[0], t[1]))              # priority, then lexical
 chosen = kept[0][1]
 print("HIT")
-print(chosen)
+print(_to_win(chosen))
 sys.exit(0)
 PYEOF
 exit 0
