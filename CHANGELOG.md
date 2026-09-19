@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - The UserPromptSubmit hook is now pure bash: it reads a small per-session flag file the Stop hook writes, instead of spawning Python to tail-scan the transcript on every message. Token detection moved into the (already async) Stop hook, so the per-message path no longer pays an interpreter cold-start or a 256 KB scan.
 - Both hooks resolve the session id from `$CLAUDE_CODE_SESSION_ID` first (present in the hook environment, though undocumented), falling back to the stdin `session_id`. The SHA-1 fallback for non-conforming ids is dropped: an id that fails the `^[A-Za-z0-9_-]{1,64}$` check is skipped (no flag, no handoff). Real session ids are UUIDs, always regex-valid.
 - The skill's handoff resolver now applies that same rule. A session id failing the regex reports `NOSID` and the skill surveys the live conversation, where it previously hashed the id to SHA-1 hex and looked for a handoff under that name. No v3.1 hook writes such a file, so that lookup could only match a handoff left behind by v3.0.x.
+- The Stop hook starts one Python interpreter per turn instead of two. It parses the hook payload itself rather than having a first interpreter print three values for the shell to re-read, which also removes the shell's `sed` extraction and its cygpath glue. The payload reaches Python in a file beside the cache, because the program text occupies stdin and Linux caps a single environment string at 128 KiB while Stop input carries `last_assistant_message`.
 
 ### Added
 
@@ -24,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - The skill resolver's MSYS-to-drive-letter path conversion is confined to Windows. Off Windows it rewrote any `/x/...` path into `X:\...`, so a resolved handoff under a single-letter root such as `/w/workspace` was reported at a path that does not exist.
 - A session running in the POSIX root directory no longer canonicalises its cwd to the empty string, which matched any handoff whose stored `cwd` was empty.
 - The UserPromptSubmit hook tests for the flag before removing it, so the common below-threshold turn no longer spawns `rm`.
+- The Stop hook no longer prints a `datetime.utcnow()` deprecation warning to stderr on every turn under Python 3.12 and later. The timestamp format is unchanged.
 
 ### Notes
 
