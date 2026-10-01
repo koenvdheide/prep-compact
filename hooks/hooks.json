@@ -13,6 +13,14 @@
           { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/update-handoff.sh\"", "async": true }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/inject-brief.sh\"" }
+        ]
+      }
     ]
   }
 }

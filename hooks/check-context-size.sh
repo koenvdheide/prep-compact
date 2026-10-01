@@ -60,7 +60,7 @@ if [[ -e "$WARN" ]] && IFS=$' \t\r' read -r TOKENS THRESHOLD _REST < "$WARN" 2>/
   : >"$FLAG"
   HANDOFF_PATH="$CACHE_DIR/handoff-$SID.json"
   if [[ -e "$HANDOFF_PATH" ]]; then
-    printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). The on-disk handoff at %s is current. When the user is ready to compact, run /prep-compact:prep-compact to add the analytical layer (decisions, constraints, blockers, verb-anchored next-step) and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first.\n' "$TOKENS" "$THRESHOLD" "$HANDOFF_PATH"
+    printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). The on-disk handoff at %s is current. When the user is ready to compact, run /prep-compact:prep-compact to add the analytical layer (decisions, constraints, blockers, verb-anchored next-step) and write a compaction brief, which a SessionStart hook re-injects after /compact. If you are at the very end of a todo list, you may finish the remaining items first.\n' "$TOKENS" "$THRESHOLD" "$HANDOFF_PATH"
   else
     printf 'Session context is approximately %s tokens (above configured threshold of %s tokens). Run /prep-compact:prep-compact to survey current state and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first.\n' "$TOKENS" "$THRESHOLD"
   fi
