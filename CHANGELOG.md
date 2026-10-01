@@ -4,6 +4,20 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-09-29
+
+### Changed
+
+- `/prep-compact` writes its output as a brief, `brief-<safe_sid>.md` beside the handoff, and tells you to type `/compact`. It previously emitted a `/compact <instructions>` line to paste, which the Claude desktop app delivers as an ordinary message instead of running. The paste-a-line flow remains the fallback when no handoff matches the session in this directory, the session id is unusable, or the brief cannot be saved (writes under `~/.claude` always ask for permission, and `dontAsk` mode refuses them).
+
+### Added
+
+- **`hooks/inject-brief.sh`**, a `SessionStart` hook with the `compact` matcher. Claude Code adds its output to the compacted context, so the brief arrives there verbatim instead of only steering the summary. The hook deletes each brief after printing it, so a later compaction never re-injects stale state, and tells Claude to trust the compaction summary where it shows later progress. With no brief it names the warm handoff, which gives automatic compactions a way back to the session's recorded state.
+
+### Fixed
+
+- The test harness removes its temporary sandbox on exit; every run used to leave one behind.
+
 ## [3.1.1] - 2026-09-19
 
 ### Fixed
