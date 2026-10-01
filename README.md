@@ -60,7 +60,7 @@ Set it in your shell profile or `~/.claude/settings.json` under `env`:
 
 ## Security and privacy
 
-The hooks read `session_id` from the environment (`$CLAUDE_CODE_SESSION_ID`) or from stdin, and the Stop hook reads `transcript_path` from stdin. Before an id becomes a filename it must match `^[A-Za-z0-9_-]{1,64}$`. An id that doesn't match is skipped by the hooks (no flag, no handoff) and treated as unusable by the skill, which surveys the live conversation instead. As of v3.1 neither side hashes it to SHA-1. The `context-warn` flag holds only the token count and the threshold, and the suppression flag is an empty presence marker.
+The hooks read `session_id` from the environment (`$CLAUDE_CODE_SESSION_ID`) or from stdin, and the Stop hook reads `transcript_path` from stdin. Before an id becomes a filename it must match `^[A-Za-z0-9_-]{1,64}$`. An id that doesn't match is skipped by the hooks (no flag, no handoff) and treated as unusable by the skill, which surveys the live conversation instead. The `context-warn` flag holds only the token count and the threshold, and the suppression flag is an empty presence marker.
 
 See [PRIVACY.md](PRIVACY.md) for the full statement.
 
