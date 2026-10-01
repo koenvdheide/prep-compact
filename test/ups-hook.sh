@@ -177,7 +177,7 @@ write_warn s39 250000 1
 HANDOFF_PATH_T39="$CACHE/handoff-s39.json"
 echo '{"version":"3.0"}' > "$HANDOFF_PATH_T39"
 OUT=$(run_hook '{"session_id":"s39"}')
-EXPECTED_T39="Session context is approximately 250000 tokens (above configured threshold of 1 tokens). The on-disk handoff at $HANDOFF_PATH_T39 is current. When the user is ready to compact, run /prep-compact:prep-compact to add the analytical layer (decisions, constraints, blockers, verb-anchored next-step) and emit a tailored /compact <instructions> block. If you are at the very end of a todo list, you may finish the remaining items first."
+EXPECTED_T39="Session context is approximately 250000 tokens (above configured threshold of 1 tokens). The on-disk handoff at $HANDOFF_PATH_T39 is current. When the user is ready to compact, run /prep-compact:prep-compact to add the analytical layer (decisions, constraints, blockers, verb-anchored next-step) and write a compaction brief, which a SessionStart hook re-injects after /compact. If you are at the very end of a todo list, you may finish the remaining items first."
 assert_eq "T-39: handoff-present reminder verbatim" "$EXPECTED_T39" "$OUT"
 
 # --- T-40: reminder when handoff missing -> verbatim no-handoff variant

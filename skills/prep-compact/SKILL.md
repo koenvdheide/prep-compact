@@ -1,11 +1,11 @@
 ---
 name: prep-compact
-description: Use when preparing to compact the conversation due to context size — typically triggered by the hook-emitted context-size reminder, when the user asks to "prep compact" / "prepare compaction instructions", or when the user invokes /prep-compact:prep-compact manually to refresh compaction instructions before running /compact. Reads the warm on-disk handoff (maintained by the Stop hook) and adds a targeted analytical pass to emit a tailored /compact <instructions> command.
+description: Use when preparing to compact the conversation due to context size — typically triggered by the hook-emitted context-size reminder, when the user asks to "prep compact" / "prepare compaction instructions", or when the user invokes /prep-compact:prep-compact manually to refresh compaction instructions before running /compact. Reads the warm on-disk handoff (maintained by the Stop hook), adds a targeted analytical pass, and writes a compaction brief that the plugin's SessionStart hook re-injects after /compact.
 ---
 
 # Prep-Compact
 
-When invoked, read the warm handoff file maintained by the Stop hook, then perform a targeted current-conversation pass for analytical fields, then emit a `/compact <instructions>` block the user can copy and run. Users often re-invoke manually to refresh — produce a fresh output every time.
+When invoked, read the warm handoff file maintained by the Stop hook, then perform a targeted current-conversation pass for analytical fields, then write a brief beside the handoff. When the user runs `/compact`, the plugin's SessionStart hook adds the brief to the compacted context verbatim. Users often re-invoke manually to refresh — produce a fresh brief every time.
 
 ## 1. Discovery
 
@@ -46,25 +46,32 @@ Default for ANY field with no direct evidence: omit per the "omit rather than fa
 
 Only claim what is observable. Omit rather than fabricate — if you do not know whether tests are passing, say nothing about tests.
 
-## 4. Produce the /compact block — mini-schema
+## 4. Produce the brief — mini-schema
 
-Default output: **single-line**, fields separated by ` | `. Single-line eliminates the "newline after `/compact`" failure mode. Field semantics: §2 (extractive), §3 (analytical).
+One field per line. Field semantics: §2 (extractive), §3 (analytical).
 
 ```
-/compact goal: <one sentence> | next: <verb anchor — edit/run/inspect/ask/wait — concrete enough to execute without re-asking the user> | files: <minimum set needed to execute `next`, spec/plan first, code files after in relevance order> | decisions: decided=<key decisions with rationale>; constraints=<hard requirements + anti-patterns user stated>; blockers=<unresolved review/QA findings, failing tests, pending user answers> | state: changes=<uncommitted files>; tests=<passing/failing/unknown>; verify=<shortest rerunnable command, e.g. "bash test/run-tests.sh" — omit if none>; in_progress=<mid-implementation markers>; agents=<"agent <id>: wait|ignore|close" per running agent, or "none">
+goal: <one sentence>
+next: <verb anchor — edit/run/inspect/ask/wait — concrete enough to execute without re-asking the user>
+files: <minimum set needed to execute `next`, spec/plan first, code files after in relevance order>
+decisions: decided=<key decisions with rationale>; constraints=<hard requirements + anti-patterns user stated>; blockers=<unresolved review/QA findings, failing tests, pending user answers>
+state: changes=<uncommitted files>; tests=<passing/failing/unknown>; verify=<shortest rerunnable command, e.g. "bash test/run-tests.sh" — omit if none>; in_progress=<mid-implementation markers>; agents=<"agent <id>: wait|ignore|close" per running agent, or "none">
 ```
 
-CRITICAL: `/compact` and `goal:` must be on the same line, separated by a single space. A newline directly after `/compact` makes Claude Code fire the bare command and drop the instructions. Subslots may be omitted when empty; write `none` only when silence would be ambiguous. Single-line is the ONLY permitted form: the entire command is one physical line with no line breaks anywhere — never split fields onto separate lines.
+Subslots may be omitted when empty; write `none` only when silence would be ambiguous.
 
-**Compression:** preserve verbatim paths, identifiers, decisions, constraints, blockers, agent-IDs. Drop chitchat, transient tool output, and exploratory dead ends that were not acted on — but keep error text or dead ends that underpin a current blocker or decision. If length presses, reference the plan/spec file path and omit redundant file enumerations rather than inlining everything.
+**Compression:** preserve verbatim paths, identifiers, decisions, constraints, blockers, agent-IDs. Drop chitchat, transient tool output, and exploratory dead ends that were not acted on — but keep error text or dead ends that underpin a current blocker or decision. If length presses, reference the plan/spec file path and omit redundant file enumerations rather than inlining everything. Keep the brief under 9,000 characters: hook output is capped at 10,000, and a longer brief reaches the compacted session only as a file path and a 2,000-character preview.
 
-## 5. Present to the user
+## 5. Deliver
 
-Output a preamble, the §4 schema with values filled in inside a single fenced code block, then a closing note. Do NOT wrap any of this in `>` blockquote — some terminal/UI clients copy the prefix into the paste, which breaks the slash-command parse.
+**`HIT` from §1:** write the brief with the Write tool to the handoff's sibling file: the same directory, with `handoff-<sid>.json` renamed to `brief-<sid>.md`. A rerun overwrites it. The directory sits under `~/.claude`, where writes always ask for permission; if the Write is refused or fails, deliver as for `MISS` below. Otherwise tell the user, with no command to copy:
 
-- Preamble: "Compaction prep ready. Copy and run:"
-- Fenced block body: §4's single-line schema with values filled in (literal first line must begin `/compact goal: ...`)
+- "Brief saved to `<path>`. Type `/compact` (no arguments needed): the plugin adds the brief to the compacted context verbatim."
+- The brief itself, so the user can check it.
 - Closing: "After compact, I'll re-read the files in `files:` and resume from `next:`."
-- **Verify before presenting (required):** confirm the command (a) is a single physical line, (b) begins with the literal characters `/compact goal:`, and (c) contains no newline anywhere. If any check fails, rewrite it as one line before emitting.
 
-If you used the in-memory fallback (`MISS` or `NOSID` from §1), keep the exact prefix §1 specifies for that case.
+**`MISS` or `NOSID` from §1:** no session-bound location exists for the hook to read, so fall back to a `/compact` command that carries the brief as instructions. Keep the exact prefix §1 specifies for that case, then output "Compaction prep ready. Copy and run:" and one fenced code block holding a single physical line: `/compact ` followed by the brief's fields, joined with ` | ` in place of line breaks. Do NOT wrap it in `>` blockquote — some terminal/UI clients copy the prefix into the paste, which breaks the slash-command parse.
+
+- **Verify before presenting (required):** confirm the command (a) is a single physical line, (b) begins with the literal characters `/compact goal:`, and (c) contains no newline anywhere. A newline directly after `/compact` makes Claude Code fire the bare command and drop the instructions.
+- After a `MISS`, tell the user: "If pasting sends this as an ordinary message instead of running it, rerun `/prep-compact` after this reply; it can then save a brief instead." The Stop hook writes the handoff at the end of this reply.
+- Closing as for `HIT`.
