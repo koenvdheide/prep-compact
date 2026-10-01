@@ -6,6 +6,7 @@
 
 HOOK="$SCRIPT_DIR/../hooks/check-context-size.sh"
 TEST_DIR="$(mktemp -d 2>/dev/null || printf '/tmp/prep-compact-test-%s' "$$")"
+trap 'rm -rf "$TEST_DIR"' EXIT
 mkdir -p "$TEST_DIR/fixtures"
 # Copy static fixtures into a sandboxed working area
 for fx in transcript-usage.jsonl transcript-malformed-tail.jsonl ups-real.json; do
