@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - The `/prep-compact` skill and its resolver.
 - `CLAUDE_CONTEXT_WARN_TOKENS` and `PREP_COMPACT_NO_USER_QUOTES`. The threshold is a constant at 45% of the window.
 - Python is no longer a requirement.
+- The plugin data directory itself. v3 accumulated one handoff and up to two flag files per session, 210 files by the time v4 replaced it; `~/.claude/plugins/data/prep-compact-agent-tools/` was deleted during the upgrade and v4 creates no equivalent.
 
 ## [3.2.0] - 2026-09-29
 
