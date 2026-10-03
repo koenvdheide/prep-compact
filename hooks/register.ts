@@ -1,8 +1,8 @@
 import type { Register } from 'claude-code'
 
 // The summarizer already has the transcript, so the brief only says what to
-// keep and carries no extracted content. Guidance was the one thing missing at
-// compaction time, so a constant does the whole job.
+// keep. Guidance was the one thing missing at compaction time, so a constant
+// does the whole job.
 export const BRIEF = [
   'Preserve the following, concretely, and prefer them over narrative:',
   '',
