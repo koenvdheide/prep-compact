@@ -29,13 +29,21 @@ export const BRIEF = [
 const WARN_AT_PERCENT = 45
 
 export const register: Register = on => {
-  on('session.compact', ($, e, next) => {
+  on('session.compact', async ($, e, next) => {
     // A manual /compact may carry the user's own text; theirs leads, ours adds
     // the structure. Absent on an automatic compaction, which is the case the
     // skill-and-hook version could never steer.
     const instructions = e.instructions ? `${e.instructions}\n\n${BRIEF}` : BRIEF
 
-    return next({ ...e, instructions })
+    const result = await next({ ...e, instructions })
+
+    // session.measure fires after a main-thread turn, so nothing clears the
+    // nudge until the next one and it sits at its pre-compaction figure. A
+    // precompute installs nothing and a skip leaves the context as it was, so
+    // in both the nudge is still true.
+    if (e.trigger !== 'precompute' && !('skip' in result)) $.ui.status(undefined)
+
+    return result
   })
 
   // prompt.submit's next(e) resolves when the turn STARTS, so reading usage
