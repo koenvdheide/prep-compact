@@ -36,7 +36,7 @@ The plugin itself is one TypeScript module the harness loads, with no interprete
 ## Known limits
 
 - The brief steers a summarizer, and compaction is lossy by design. It improves what a summary keeps, with no guarantee about any particular detail.
-- A hook that throws is skipped and the engine keeps the previous result; a module that fails to load leaves compaction at Claude Code's default and the status line empty. Nothing reports either case.
+- A hook that throws is skipped, and the engine runs the rest of the chain in its place, so compaction still happens without the brief. A module that fails to load leaves compaction at Claude Code's default and the status line empty. The plugin registers no `.catch` handler, so it neither reports nor recovers from its own failure.
 - The threshold is a constant 45% in `hooks/register.ts`. Changing it means editing that one line. There is no environment variable and no setting.
 - The plugin keeps no archive across compactions, so whatever a summary drops is gone from its own record. A second compaction in the same session sees what the first one kept.
 
