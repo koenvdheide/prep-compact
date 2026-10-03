@@ -2,17 +2,17 @@
 
 ## Why
 
-Compaction drops the things you wanted kept: the files you were editing, the decisions behind them, the blocker you were halfway through. Running `/compact <instructions>` with a prompt you wrote yourself can give a much cleaner resumption, but you have to remember to do it, and automatic compactions fire whether you remembered or not.
+Compaction drops the things you wanted kept: the files you were editing, the decisions behind them, the blocker you were halfway through. Running `/compact <instructions>` with a prompt you wrote yourself can give a cleaner resumption, but you have to remember to do it, and automatic compactions fire whether you remembered or not.
 
 This plugin puts a brief in front of every compaction, automatic ones included, and shows the context percentage in the status line once it climbs high enough to be worth acting on.
 
-A `/compact` you type steers one compaction, the one you remembered. v3 of this plugin depended on you invoking a skill, which left every automatic compaction unchanged. A hook runs on all of them, and you stop retyping the brief. When you do run `/compact` with your own text, that text leads and the brief follows, so an instruction meant for this one compaction comes first.
+A `/compact` you type steers one compaction, the one you remembered. v3 of this plugin depended on you invoking a skill, so the summarizer saw instructions only for a compaction you had prepared. A `session.compact` hook reaches every compaction, and you stop retyping the brief. When you do run `/compact` with your own text, that text leads and the brief follows, so an instruction meant for this one compaction comes first.
 
 ## How it works
 
 Two hooks, both in `hooks/register.ts`.
 
-A `session.compact` hook appends the brief to the compaction's instructions. The brief asks for the session's goal in one sentence, a verb-anchored next step (`edit <path>`, `run <command>`, `ask user <question>`), and the minimum set of files needed to execute that step. It also asks for the decisions taken and the reasoning behind them, the constraints you stated as hard requirements, the blockers still open, and the session state: uncommitted changes, test status, work left mid-implementation, any subagent still running. Paths, identifiers, commands and constraints come through verbatim, and exploratory dead ends get dropped unless one underpins a blocker or a decision that still stands.
+A `session.compact` hook appends the brief to the compaction's instructions. The brief asks for the session's goal in one sentence, a verb-anchored next step (`edit <path>`, `run <command>`, `ask user <question>`), and the minimum set of files needed to execute that step. It also asks for the decisions taken and the reasoning behind them, the constraints you stated as hard requirements, the blockers still open, and the session state: uncommitted changes, test status, work left mid-implementation, any subagent still running. Paths, identifiers, commands, decisions and constraints come through verbatim, and exploratory dead ends that were not acted on get dropped unless one underpins a blocker or a decision that still stands.
 
 The brief is a constant, identical in every session. The summarizer already has the transcript, so the thing missing at compaction time was guidance on what to keep.
 

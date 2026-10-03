@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to prep-compact will be documented in this file.
+All notable changes to better-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - Rewritten as a Claude Code mod and renamed `better-compact`. Two hooks replace three shell hooks and a skill: `session.compact` steers every compaction, and `session.measure` drives a status-line nudge.
-- Every compaction is now steered, including automatic ones. v3 could not reach those at all, because it depended on the user invoking a skill.
+- Every compaction is now steered, including automatic ones. v3 steered only a compaction the user had prepared with the skill; after an automatic one its `SessionStart` hook could point at the warm handoff, though nothing steered the summary itself.
 - The nudge reaches the user through the status line instead of being injected into Claude's context on every prompt above the threshold.
 - CI validates the plugin manifest and module instead of running the shell harness.
 
