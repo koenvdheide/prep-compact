@@ -4,6 +4,23 @@ All notable changes to prep-compact will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-10-03
+
+### Changed
+
+- Rewritten as a Claude Code mod and renamed `better-compact`. Two hooks replace three shell hooks and a skill: `session.compact` steers every compaction, and `session.measure` drives a status-line nudge.
+- Every compaction is now steered, including automatic ones. v3 could not reach those at all, because it depended on the user invoking a skill.
+- The nudge reaches the user through the status line instead of being injected into Claude's context on every prompt above the threshold.
+- CI validates the plugin manifest and module instead of running the shell harness.
+
+### Removed
+
+- `handoff-<sid>.json`, `brief-<sid>.md`, `context-warn-<sid>` and `compact-warned-<sid>`. The plugin now writes nothing.
+- The Stop hook's transcript parser, the session-id sanitisation, the cwd binding, the cygpath bridge, the atomic writes, the mtime race guards and the re-arm logic.
+- The `/prep-compact` skill and its resolver.
+- `CLAUDE_CONTEXT_WARN_TOKENS` and `PREP_COMPACT_NO_USER_QUOTES`. The threshold is a constant at 45% of the window.
+- Python is no longer a requirement.
+
 ## [3.2.0] - 2026-09-29
 
 ### Changed
