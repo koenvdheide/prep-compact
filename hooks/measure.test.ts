@@ -46,7 +46,7 @@ test('below the threshold the status line is cleared', async ($, on) => {
   expect(got.shown).toBe(undefined)
 })
 
-test('an absent percentage clears rather than guesses', async ($, on) => {
+test('an absent percentage clears the status line', async ($, on) => {
   const got = capture(on, 'stale')
 
   await $.session.measure(raise(undefined))
