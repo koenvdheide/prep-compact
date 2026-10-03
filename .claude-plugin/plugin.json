@@ -1,7 +1,8 @@
 {
-  "name": "prep-compact",
-  "description": "When your Claude Code session's real token count crosses a configurable threshold (default 450K), an informational reminder names the warm handoff file. A Stop hook continuously maintains an on-disk handoff JSON (cumulative file paths, in-progress todos, active subagent launches, recent user-message quotes). The /prep-compact skill reads this warm handoff and adds an analytical layer (decisions, constraints, blockers, verb-anchored next-step) to write a compaction brief, which a SessionStart hook re-injects verbatim after /compact.",
-  "version": "3.2.0",
+  "name": "better-compact",
+  "displayName": "Better Compact",
+  "description": "Steers every compaction, including automatic ones, with a brief that keeps goal, next step, files, decisions and state.",
+  "version": "4.0.0",
   "author": {
     "name": "Koen van der Heide",
     "url": "https://github.com/koenvdheide"
