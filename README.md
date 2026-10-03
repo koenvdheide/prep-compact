@@ -6,7 +6,7 @@ Compaction drops the things you wanted kept: the files you were editing, the dec
 
 This plugin puts a brief in front of every compaction, automatic ones included, and shows the context percentage in the status line once it climbs high enough to be worth acting on.
 
-A `/compact` you type steers one compaction, the one you remembered. v3 of this plugin depended on you invoking a skill, so the summarizer saw instructions only for a compaction you had prepared. A `session.compact` hook reaches every compaction, and you stop retyping the brief. When you do run `/compact` with your own text, that text leads and the brief follows, so an instruction meant for this one compaction comes first.
+A `/compact` you type steers one compaction, the one you remembered. v3 of this plugin added its brief to the context after the summary was made, through a `SessionStart` hook, so the summarizer itself worked from Claude Code's own instructions. A `session.compact` hook shapes the summary while it is written, on every compaction, and you stop retyping the brief. When you do run `/compact` with your own text, that text leads and the brief follows, so an instruction meant for this one compaction comes first.
 
 ## How it works
 
@@ -25,15 +25,18 @@ A `session.measure` hook writes the context percentage into the status line once
 /plugin install better-compact@agent-tools
 ```
 
-The marketplace catalogue still lists the plugin under its old name. Renaming that entry is part of the 4.0.0 release, and the install line above works once it lands.
+The marketplace catalogue still lists the plugin under its old name, so the second line above fails today. Renaming that entry is part of the 4.0.0 release. The old name `prep-compact@agent-tools` still resolves, and installing it gets you v3: the shell hooks and the skill.
 
 ## Requirements
 
-A Claude Code build with mod support, and nothing else. The plugin is one TypeScript module the harness loads, with no interpreter or shell dependencies and nothing needed on `PATH`.
+A Claude Code build with mods turned on. Mods are an early-access feature, switched on with `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`; some builds and accounts carry it already. To see which you have, clone this repository and run `claude plugin test .` there: with mods on it runs this plugin's tests, and otherwise it prints the early-access notice naming that variable.
+
+The plugin itself is one TypeScript module the harness loads, with no interpreter or shell dependencies and nothing needed on `PATH`.
 
 ## Known limits
 
 - The brief steers a summarizer, and compaction is lossy by design. It improves what a summary keeps, with no guarantee about any particular detail.
+- A hook that throws is skipped and the engine keeps the previous result; a module that fails to load leaves compaction at Claude Code's default and the status line empty. Nothing reports either case.
 - The threshold is a constant 45% in `hooks/register.ts`. Changing it means editing that one line. There is no environment variable and no setting.
 - The plugin keeps no archive across compactions, so whatever a summary drops is gone from its own record. A second compaction in the same session sees what the first one kept.
 

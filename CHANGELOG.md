@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - Rewritten as a Claude Code mod and renamed `better-compact`. Two hooks replace three shell hooks and a skill: `session.compact` steers every compaction, and `session.measure` drives a status-line nudge.
-- Every compaction is now steered, including automatic ones. v3 steered only a compaction the user had prepared with the skill; after an automatic one its `SessionStart` hook could point at the warm handoff, though nothing steered the summary itself.
+- Every compaction is now steered, including automatic ones. v3 added its brief to the context after the summary was made, through a `SessionStart` hook; the summary itself was steered only on the fallback path, where the user pasted the brief into `/compact` as instructions.
 - The nudge reaches the user through the status line instead of being injected into Claude's context on every prompt above the threshold.
 - CI validates the plugin manifest and module, then runs the plugin's tests with `claude plugin test`.
 
@@ -20,7 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - The `/prep-compact` skill and its resolver.
 - `CLAUDE_CONTEXT_WARN_TOKENS` and `PREP_COMPACT_NO_USER_QUOTES`. The threshold is a constant at 45% of the window.
 - Python is no longer a requirement.
-- The plugin data directory itself. v3 accumulated one handoff and up to two flag files per session, 210 files by the time v4 replaced it; `~/.claude/plugins/data/prep-compact-agent-tools/` was deleted during the upgrade and v4 creates no equivalent.
+- The plugin data directory. 4.0.0 writes nothing and creates no directory under `~/.claude/plugins/data/`. A v3 install leaves `prep-compact-agent-tools/` there, holding one handoff and up to two flag files per session; delete it when you upgrade.
 
 ## [3.2.0] - 2026-09-29
 
