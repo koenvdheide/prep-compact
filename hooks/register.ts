@@ -1,8 +1,8 @@
 import type { Register } from 'claude-code'
 
-// The summarizer already has the transcript, so the brief says what to keep
-// rather than carrying extracted content. That is why this is a constant and
-// not an analysis pass: the only thing missing at compaction time was guidance.
+// The summarizer already has the transcript, so the brief only says what to
+// keep and carries no extracted content. Guidance was the one thing missing at
+// compaction time, so a constant does the whole job.
 export const BRIEF = [
   'Preserve the following, concretely, and prefer them over narrative:',
   '',
@@ -23,24 +23,24 @@ export const BRIEF = [
   'blocker or a decision that still stands.',
 ].join('\n')
 
-// 45% of the window. A percentage rather than a token count so it follows the
-// model rather than assuming the 1M Opus window.
+// 45% of the window, so the threshold tracks whatever window the model has.
+// A token count would pin it to the 1M Opus window.
 const WARN_AT_PERCENT = 45
 
 export const register: Register = on => {
   on('session.compact', ($, e, next) => {
     // A manual /compact may carry the user's own text; theirs leads, ours adds
     // the structure. Absent on an automatic compaction, which is the case the
-    // skill-and-hook version could never reach.
+    // skill-and-hook version could never steer.
     const instructions = e.instructions ? `${e.instructions}\n\n${BRIEF}` : BRIEF
 
     return next({ ...e, instructions })
   })
 
-  // session.measure, not prompt.submit: prompt.submit's next(e) resolves when
-  // the turn STARTS, so reading usage there reports the previous turn's figure
-  // and the status line lags by one. session.measure carries the live context
-  // in its own input, which also removes the $.session.usage() call.
+  // prompt.submit's next(e) resolves when the turn STARTS, so reading usage
+  // there reports the previous turn's figure and the status line lags by one.
+  // session.measure carries the live context in its own input, which also
+  // removes the $.session.usage() call.
   on('session.measure', ($, e, next) => {
     const { percent } = e.context
 
