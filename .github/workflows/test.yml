@@ -21,3 +21,11 @@ jobs:
 
       - name: Validate the plugin manifest and module
         run: claude plugin validate --strict .
+
+      # Mods are early access, and the runner has no credentials or settings of
+      # its own, so the tests need the switch turned on explicitly. Without it
+      # the command exits 1 on the early-access notice, which keeps CI honest.
+      - name: Run the plugin's tests
+        env:
+          CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: "1"
+        run: claude plugin test .
