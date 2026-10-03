@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import type { SessionCompactInput } from 'claude-code'
+import type { On, SessionCompactInput } from 'claude-code'
 import { BRIEF } from './register'
 
 const raise = (over: Partial<SessionCompactInput> = {}): SessionCompactInput => ({
@@ -11,41 +11,39 @@ const raise = (over: Partial<SessionCompactInput> = {}): SessionCompactInput => 
 // The engine rejects an empty array: a compaction leaves at least one message.
 const answered = () => ({ messages: [{ role: 'assistant' as const, text: 'summary', toolUses: [] }] })
 
-test('a compaction with no instructions receives exactly the brief', async ($, on) => {
-  let seen: string | undefined
+// The bottom hook fills the holder during the await, so each test reads it after.
+const capture = (on: On) => {
+  const seen: { instructions?: string } = {}
   on('session.compact', (_$, e) => {
-    seen = e.instructions
+    seen.instructions = e.instructions
     return answered()
   })
+  return seen
+}
+
+test('a compaction with no instructions receives exactly the brief', async ($, on) => {
+  const seen = capture(on)
 
   await $.session.compact(raise())
 
-  expect(seen).toBe(BRIEF)
+  expect(seen.instructions).toBe(BRIEF)
 })
 
 test("the user's own text leads, then a blank line, then the brief", async ($, on) => {
-  let seen: string | undefined
-  on('session.compact', (_$, e) => {
-    seen = e.instructions
-    return answered()
-  })
+  const seen = capture(on)
 
   await $.session.compact(raise({ instructions: 'focus on the parser rewrite' }))
 
-  expect(seen).toBe('focus on the parser rewrite\n\n' + BRIEF)
+  expect(seen.instructions).toBe('focus on the parser rewrite\n\n' + BRIEF)
 })
 
 for (const trigger of ['manual', 'auto', 'plugin', 'precompute'] as const) {
   test(`a ${trigger} compaction is steered`, async ($, on) => {
-    let seen: string | undefined
-    on('session.compact', (_$, e) => {
-      seen = e.instructions
-      return answered()
-    })
+    const seen = capture(on)
 
     await $.session.compact(raise({ trigger }))
 
-    expect(seen).toBe(BRIEF)
+    expect(seen.instructions).toBe(BRIEF)
   })
 }
 
