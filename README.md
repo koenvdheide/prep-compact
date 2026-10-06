@@ -25,8 +25,6 @@ A `session.measure` hook writes the context percentage into the status line once
 /plugin install better-compact@agent-tools
 ```
 
-The marketplace catalogue still lists the plugin under its old name, so the second line above fails today. Renaming that entry is part of the 4.0.0 release. The old name `prep-compact@agent-tools` still resolves, and installing it gets you v3: the shell hooks and the skill.
-
 ## Requirements
 
 A Claude Code build with mods turned on. Mods are an early-access feature, switched on with `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`; some builds and accounts carry it already. To see which you have, clone this repository and run `claude plugin test .` there: with mods on it runs this plugin's tests, and otherwise it prints the early-access notice naming that variable.
