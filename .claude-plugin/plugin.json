@@ -13,7 +13,8 @@
   "keywords": [
     "compact",
     "context-management",
-    "hooks",
-    "session"
+    "mod",
+    "session",
+    "status-line"
   ]
 }
