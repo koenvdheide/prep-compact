@@ -2,7 +2,7 @@
 
 better-compact keeps nothing.
 
-It writes no file, keeps no session id, and stores no value in session or cross-session storage. It reads two things the engine hands it: the compaction's existing instructions, and the live context percentage. It adds a fixed block of text to the first and draws the second in the status line.
+It writes no file, keeps no session id, and stores no value in session or cross-session storage. It reads two things the engine hands it: the compaction's existing instructions, and the live context percentage. It adds a fixed block of text to the first and draws the second above the prompt.
 
 The brief it supplies is a constant, identical in every session, and contains no session content.
 

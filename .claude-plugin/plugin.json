@@ -14,7 +14,6 @@
     "compact",
     "context-management",
     "mod",
-    "session",
-    "status-line"
+    "session"
   ]
 }

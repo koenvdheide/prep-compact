@@ -8,11 +8,11 @@ This plugin reminds you at the right moment and supplies that prompt for you. It
 
 ## How it works
 
-The plugin nudges you to compact once the context window reaches 45%. On a 1M-token window that's about 450k tokens; on a different window the threshold moves with it. Anecdotally, performance starts to drop at about the halfway mark of the context window (so ~500k tokens on a 1M window), so this plugin fires early enough to try to preempt that. You can type `/compact` when you're ready, or let automatic compaction run with the same brief.
+The plugin nudges you to compact once the context window reaches 45%. On a 1M-token window that's about 450k tokens; on a different window the threshold moves with it. Anecdotally, performance starts to drop at about the halfway mark of the context window (so ~500k tokens on a 1M window), so this plugin fires early enough to try to preempt that. You can click the nudge or type `/compact` when you're ready, or let automatic compaction run with the same brief.
 
-Claude Code now exposes the live context percentage and the compaction's instructions to function hooks, so the plugin uses a pair of hooks in `hooks/register.ts`:
+Claude Code now exposes the live context percentage and the compaction's instructions to function hooks, so the plugin uses hooks in `hooks/register.tsx`:
 
-> A `session.measure` hook reads the context percentage after a main-thread turn and shows the current level in the status line once it reaches 45%, for example `context 62% — /compact when convenient`. Below that, or when the percentage isn't available, it clears the line.
+> A `session.measure` hook reads the context percentage after a main-thread turn. Once it reaches 45%, a `ui.render` hook draws a button in the band above the prompt, beside anything other plugins draw there: `context at 62% usage, click to compact`. Clicking it runs `/compact`. A Claude Code survey takes the band first. Below 45%, or when the percentage isn't available, the band is left to Claude Code and the other plugins.
 >
 > A `session.compact` hook adds the brief to the instructions used to write the summary. If you typed `/compact <instructions>` yourself, your text comes first and the brief follows. The hook applies to automatic compactions too.
 
@@ -20,7 +20,7 @@ The brief asks for the session's goal, a concrete next step (`edit <path>`, `run
 
 The brief is the same in every session. The summarizer already has the conversation; the plugin supplies the instructions for what to keep.
 
-A successful manual or automatic compaction clears the nudge. A skipped compaction or a precomputed summary leaves it alone, since the context hasn't been replaced yet.
+A successful compaction of the main conversation, manual or automatic, withdraws the nudge, and so does `/clear`. A skipped compaction or a precomputed summary leaves it alone, since the context hasn't been replaced yet.
 
 ## Install
 
@@ -40,7 +40,7 @@ Run `/reload-plugins` if you installed mid-session.
 
 ## Configuration
 
-The threshold is fixed at 45% (`WARN_AT_PERCENT` in `hooks/register.ts`). There is no user setting for it.
+The threshold is fixed at 45% (`WARN_AT_PERCENT` in `hooks/register.tsx`). There is no user setting for it.
 
 ## Security and privacy
 
@@ -51,8 +51,8 @@ See [PRIVACY.md](PRIVACY.md) for the full statement.
 ## Known limits
 
 - The brief asks the summarizer to keep particular details, but compaction is still lossy. There's no guarantee that any individual detail survives.
-- The status-line reminder is informational. It doesn't run `/compact` for you.
-- The plugin has no error handler of its own. If the module fails to load, it cannot supply the brief or the status-line reminder.
+- The band above the prompt holds one drawing. The plugin keeps what the plugins beneath it drew there, but a plugin above it that replaces the band hides the nudge.
+- The plugin has no error handler of its own. If the module fails to load, it cannot supply the brief or the nudge.
 - The plugin keeps no archive across compactions. Whatever the first summary drops is also missing from the context available to the next one.
 
 ## License
