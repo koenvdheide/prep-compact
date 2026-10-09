@@ -2,45 +2,58 @@
 
 ## Why
 
-Compaction drops the things you wanted kept: the files you were editing, the decisions behind them, the blocker you were halfway through. Running `/compact <instructions>` with a prompt you wrote yourself can give a cleaner resumption, but you have to remember to do it, and automatic compactions fire whether you remembered or not.
+Claude Code's auto-compaction tends to drop the files, decisions and blockers you wanted kept, and it loses track of which subagents were running. A second compaction in the same session only sees what the first one kept. Running `/compact <instructions>` with a prompt you wrote yourself can give you a much cleaner resumption, but you have to remember to do it, and then write a huge prompt.
 
-This plugin puts a brief in front of every compaction, automatic ones included, and shows the context percentage in the status line once it climbs high enough to be worth acting on.
-
-A `/compact` you type steers one compaction, the one you remembered. v3 of this plugin added its brief to the context after the summary was made, through a `SessionStart` hook, so the summarizer itself worked from Claude Code's own instructions. A `session.compact` hook shapes the summary while it is written, on every compaction, and you stop retyping the brief. When you do run `/compact` with your own text, that text leads and the brief follows, so an instruction meant for this one compaction comes first.
+This plugin reminds you at the right moment and supplies that prompt for you. It adds a brief to every compaction, including automatic ones, so you don't have to remember to prepare it yourself.
 
 ## How it works
 
-Two hooks, both in `hooks/register.ts`.
+The plugin nudges you to compact once the context window reaches 45%. On a 1M-token window that's about 450k tokens; on a different window the threshold moves with it. Anecdotally, performance starts to drop at about the halfway mark of the context window (so ~500k tokens on a 1M window), so this plugin fires early enough to try to preempt that. You can type `/compact` when you're ready, or let automatic compaction run with the same brief.
 
-A `session.compact` hook appends the brief to the compaction's instructions. The brief asks for the session's goal in one sentence, a verb-anchored next step (`edit <path>`, `run <command>`, `ask user <question>`), and the minimum set of files needed to execute that step. It also asks for the decisions taken, the reasoning behind them and the constraints you stated as hard requirements; the blockers still open, in a section of their own; and the session state: uncommitted changes, test status, work left mid-implementation, any subagent still running. Paths, identifiers, commands, decisions and constraints come through verbatim, and exploratory dead ends that were not acted on get dropped unless one underpins a blocker or a decision that still stands.
+Claude Code now exposes the live context percentage and the compaction's instructions to function hooks, so the plugin uses a pair of hooks in `hooks/register.ts`:
 
-The brief is a constant, identical in every session. The summarizer already has the transcript, so the thing missing at compaction time was guidance on what to keep.
+> A `session.measure` hook reads the context percentage after a main-thread turn and shows the current level in the status line once it reaches 45%, for example `context 62% — /compact when convenient`. Below that, or when the percentage isn't available, it clears the line.
+>
+> A `session.compact` hook adds the brief to the instructions used to write the summary. If you typed `/compact <instructions>` yourself, your text comes first and the brief follows. The hook applies to automatic compactions too.
 
-A `session.measure` hook writes the context percentage into the status line once it reaches 45%, so you can compact at a moment that suits you. The line reads `context 62% — /compact when convenient`. The 45% is a share of the context window, so the nudge moves with whatever window the model has.
+The brief asks for the session's goal, a concrete next step (`edit <path>`, `run <command>`, `ask user <question>` etc.), and the minimum set of files needed to execute it. It also asks for the decisions and their reasoning, the constraints you stated, the blockers still open, and the session state: uncommitted changes, test status with a command to rerun the tests, work left mid-implementation, and any subagents still running. Paths, identifiers, commands, decisions and constraints are to be quoted verbatim. Exploratory dead ends get dropped unless they explain a blocker or a decision that still stands.
+
+The brief is the same in every session. The summarizer already has the conversation; the plugin supplies the instructions for what to keep.
+
+A successful manual or automatic compaction clears the nudge. A skipped compaction or a precomputed summary leaves it alone, since the context hasn't been replaced yet.
 
 ## Install
+
+Add the `agent-tools` marketplace and install the plugin:
 
 ```text
 /plugin marketplace add koenvdheide/agent-tools
 /plugin install better-compact@agent-tools
 ```
 
+Run `/reload-plugins` if you installed mid-session.
+
 ## Requirements
 
-A Claude Code build with mods turned on. Mods are an early-access feature, switched on with `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`; some builds and accounts carry it already. To see which you have, clone this repository and run `claude plugin test .` there: with mods on it runs this plugin's tests, and otherwise it prints the early-access notice naming that variable.
+- Claude Code with plugin support and mods turned on. If `/plugin` comes back unknown, update Claude Code first. Mods are an early-access feature enabled with `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`; some builds and accounts have them enabled already.
+- The plugin is one TypeScript module loaded by Claude Code. It needs no Python, shell or other program on `PATH`.
 
-The plugin itself is one TypeScript module the harness loads, with no interpreter or shell dependencies and nothing needed on `PATH`.
+## Configuration
+
+The threshold is fixed at 45% (`WARN_AT_PERCENT` in `hooks/register.ts`). There is no user setting for it.
+
+## Security and privacy
+
+The plugin reads the compaction's existing instructions and the live context percentage. It writes no files and keeps no session record. It makes no network requests of its own; the brief goes along with Claude Code's normal compaction request.
+
+See [PRIVACY.md](PRIVACY.md) for the full statement.
 
 ## Known limits
 
-- The brief steers a summarizer, and compaction is lossy by design. It improves what a summary keeps, with no guarantee about any particular detail.
-- A hook that throws is skipped, and the engine runs the rest of the chain in its place, so compaction still happens without the brief. A module that fails to load leaves compaction at Claude Code's default and the status line empty. The plugin registers no `.catch` handler, so it neither reports nor recovers from its own failure.
-- The threshold is a constant 45% in `hooks/register.ts`. Changing it means editing that one line. There is no environment variable and no setting.
-- The plugin keeps no archive across compactions, so whatever a summary drops is gone from its own record. A second compaction in the same session sees what the first one kept.
-
-## Privacy
-
-[PRIVACY.md](PRIVACY.md) covers what the plugin reads and what it keeps.
+- The brief asks the summarizer to keep particular details, but compaction is still lossy. There's no guarantee that any individual detail survives.
+- The status-line reminder is informational. It doesn't run `/compact` for you.
+- The plugin has no error handler of its own. If the module fails to load, it cannot supply the brief or the status-line reminder.
+- The plugin keeps no archive across compactions. Whatever the first summary drops is also missing from the context available to the next one.
 
 ## License
 
