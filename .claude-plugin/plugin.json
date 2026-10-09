@@ -2,7 +2,7 @@
   "name": "better-compact",
   "displayName": "Better Compact",
   "description": "Steers every compaction, including automatic ones, with a brief that keeps goal, next step, files, decisions and state.",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "author": {
     "name": "Koen van der Heide",
     "url": "https://github.com/koenvdheide"
