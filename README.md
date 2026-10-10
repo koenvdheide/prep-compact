@@ -4,7 +4,7 @@
 
 Claude Code's auto-compaction tends to drop the files, decisions and blockers you wanted kept, and it loses track of which subagents were running. A second compaction in the same session only sees what the first one kept. Running `/compact <instructions>` with a prompt you wrote yourself can give you a much cleaner resumption, but you have to remember to do it, and then write a huge prompt.
 
-This plugin reminds you at the right moment and supplies that prompt for you. It adds a brief to every compaction, including automatic ones, so you don't have to remember to prepare it yourself.
+This plugin reminds you at the right moment and supplies that prompt for you. It adds a brief to every compaction, including automatic ones, so you don't have to remember to prepare it yourself. The reminder is a button above the prompt, so compacting takes one click.
 
 ## How it works
 

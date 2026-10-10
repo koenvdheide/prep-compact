@@ -1,7 +1,7 @@
 {
   "name": "better-compact",
   "displayName": "Better Compact",
-  "description": "Steers every compaction, including automatic ones, with a brief that keeps goal, next step, files, decisions and state.",
+  "description": "Steers every compaction, including automatic ones, with a brief that keeps goal, next step, files, decisions and state. Once context runs high, a button above the prompt runs /compact, so you compact before a long context eats into your usage limits and model performance.",
   "version": "4.1.0",
   "author": {
     "name": "Koen van der Heide",
